@@ -21,9 +21,12 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const API_KEY = process.env.API_KEY || 'default-dev-key'; // Change in production!
 
-// Setup FFmpeg paths automatically
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-ffmpeg.setFfprobePath(ffprobeInstaller.path);
+// Setup FFmpeg paths: Use installers for local Windows dev, 
+// but use system binary for production Linux (Railway) to save memory.
+if (process.platform === 'win32') {
+  ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+  ffmpeg.setFfprobePath(ffprobeInstaller.path);
+}
 
 // Setup Supabase
 const supabase = createClient(
@@ -153,10 +156,11 @@ app.post('/render', authenticate, async (req, res) => {
         .videoFilters(`ass='${escapedAssPath}'`)
         .outputOptions([
           '-c:v libx264',
-          '-preset ultrafast', // Optimize for speed in cloud
+          '-preset veryfast', // 'veryfast' is safer for memory than 'ultrafast'
           '-crf 23',
+          '-threads 1', // IMPORTANT: Limits RAM usage significantly
           '-pix_fmt yuv420p',
-          '-c:a copy', // Copy audio directly to save re-encoding time
+          '-c:a copy',
           '-movflags faststart'
         ])
         .output(outputPath)
