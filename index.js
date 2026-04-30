@@ -193,7 +193,9 @@ app.post('/render', authenticate, async (req, res) => {
     const processedUrl = publicUrlData.publicUrl;
 
     // 5. Update Database Record
-    if (postId) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(postId);
+    
+    if (postId && isUuid) {
       const { error: dbError } = await supabase
         .from('scheduled_posts')
         .update({
@@ -203,6 +205,8 @@ app.post('/render', authenticate, async (req, res) => {
         .eq('id', postId);
         
       if (dbError) console.error(`[Job ${postId}] Warning: Failed to update DB status:`, dbError);
+    } else {
+      console.log(`[Job ${postId}] Skipping DB update (ID is not a valid UUID).`);
     }
 
     // Success response
