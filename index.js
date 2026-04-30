@@ -138,8 +138,15 @@ app.post('/render', authenticate, async (req, res) => {
     // 3. Run FFmpeg Engine
     console.log(`[Job ${postId}] Executing FFmpeg processing...`);
     
-    // Windows path escaping for the 'ass' filter:
-    const escapedAssPath = assPath.replace(/\\/g, '/').replace(':', '\\:');
+    // Cross-platform path escaping for the 'ass' filter:
+    let escapedAssPath;
+    if (process.platform === 'win32') {
+      // Windows needs the drive colon escaped and forward slashes
+      escapedAssPath = assPath.replace(/\\/g, '/').replace(':', '\\:');
+    } else {
+      // Linux/Railway needs a clean path
+      escapedAssPath = assPath;
+    }
 
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
