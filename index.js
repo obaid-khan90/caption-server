@@ -265,7 +265,9 @@ app.post('/render', authenticate, async (req, res) => {
         .from('scheduled_posts')
         .update({
           caption_burn_output_url: processedUrl,
-          caption_burn_task_status: 'completed'
+          caption_burn_task_status: 'completed',
+          media_urls: [processedUrl]
+
         })
         .eq('id', postId);
 
