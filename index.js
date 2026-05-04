@@ -1,7 +1,7 @@
 const express = require('express');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
+// const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+// const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -23,12 +23,16 @@ const API_KEY = process.env.API_KEY || 'default-dev-key'; // Change in productio
 
 // Setup FFmpeg paths: Use installers for local Windows dev, 
 // but use system binary for production Linux (Railway) to save memory.
-if (process.platform === 'win32') {
-  ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-  ffmpeg.setFfprobePath(ffprobeInstaller.path);
-}
+// if (process.platform === 'win32') {
+//   ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+//   ffmpeg.setFfprobePath(ffprobeInstaller.path);
+// }
 
 // Setup Supabase
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("❌ Missing Supabase environment variables");
+  process.exit(1);
+}
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -272,6 +276,6 @@ app.post('/render', authenticate, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Production Caption Server running on port ${PORT}`);
 });
