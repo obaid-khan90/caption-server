@@ -96,14 +96,19 @@ app.post('/render', authenticate, async (req, res) => {
   if (!segments || segments.length === 0) {
     console.log(`[Job ${postId}] Segments missing. Requesting transcription from Supabase...`);
     try {
-      const whisperRes = await axios.post(`${process.env.SUPABASE_URL}/functions/v1/whisper-transcribe`,
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+      console.log(`[DEBUG] Supabase URL: ${supabaseUrl}`);
+      console.log(`[DEBUG] Service Key starts with: ${serviceKey.substring(0, 10)}... ends with: ...${serviceKey.slice(-10)}`);
+      console.log(`[DEBUG] Key length: ${serviceKey.length}`);
+      const whisperRes = await axios.post(`${supabaseUrl}/functions/v1/whisper-transcribe`,
         { videoUrl: cleanVideoUrl },
-        { 
-          headers: { 
-            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, 
-            'Content-Type': 'application/json' 
+        {
+          headers: {
+            'Authorization': `Bearer ${serviceKey}`,
+            'Content-Type': 'application/json'
           },
-          timeout: 120000 // 2 minute timeout for Whisper
+          timeout: 120000
         }
       );
 
@@ -113,7 +118,7 @@ app.post('/render', authenticate, async (req, res) => {
       }
 
       console.log(`[Job ${postId}] Transcribed ${words.length} words. Formatting segments...`);
-      
+
       // Format segments (3 words per screen)
       segments = [];
       for (let i = 0; i < words.length; i += 3) {
@@ -148,7 +153,7 @@ app.post('/render', authenticate, async (req, res) => {
       url: cleanVideoUrl,
       responseType: 'stream'
     });
-    
+
     const writer = fs.createWriteStream(inputPath);
     videoRes.data.pipe(writer);
     await new Promise((resolve, reject) => {
@@ -178,7 +183,7 @@ app.post('/render', authenticate, async (req, res) => {
 
     // 3. Run FFmpeg Engine
     console.log(`[Job ${postId}] Executing FFmpeg processing...`);
-    
+
     // Cross-platform path escaping for the 'ass' filter:
     let escapedAssPath;
     if (process.platform === 'win32') {
@@ -232,7 +237,7 @@ app.post('/render', authenticate, async (req, res) => {
 
     // 5. Update Database Record
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(postId);
-    
+
     if (postId && isUuid) {
       const { error: dbError } = await supabase
         .from('scheduled_posts')
@@ -241,7 +246,7 @@ app.post('/render', authenticate, async (req, res) => {
           caption_burn_task_status: 'completed'
         })
         .eq('id', postId);
-        
+
       if (dbError) console.error(`[Job ${postId}] Warning: Failed to update DB status:`, dbError);
     } else {
       console.log(`[Job ${postId}] Skipping DB update (ID is not a valid UUID).`);
