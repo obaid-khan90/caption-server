@@ -105,7 +105,7 @@ app.post('/render', authenticate, async (req, res) => {
       console.log(`[DEBUG] Supabase URL: ${supabaseUrl}`);
       console.log(`[DEBUG] Service Key starts with: ${serviceKey.substring(0, 10)}... ends with: ...${serviceKey.slice(-10)}`);
       console.log(`[DEBUG] Key length: ${serviceKey.length}`);
-      const whisperRes = await axios.post(`${supabaseUrl}functions/v1/whisper-transcribe`,
+      const whisperRes = await axios.post(`${supabaseUrl}/functions/v1/whisper-transcribe`,
         { videoUrl: cleanVideoUrl },
         {
           headers: {
