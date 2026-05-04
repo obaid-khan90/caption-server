@@ -116,7 +116,20 @@ app.post('/render', authenticate, async (req, res) => {
         }
       );
 
+      console.log(`[DEBUG] URL: ${supabaseUrl}/functions/v1/whisper-transcribe`);
+
+      console.log("[DEBUG] Whisper Data", whisperRes.data)
+
+      console.log("[DEBUG] Whisper Data-JSON", JSON.stringify(whisperRes.data))
+
+
       const { words } = whisperRes.data;
+
+      console.log("[DEBUG] words", words)
+
+      console.log("[DEBUG] words Data-JSON", JSON.stringify(words))
+
+
       if (!words || words.length === 0) {
         throw new Error('Whisper returned no words.');
       }
@@ -133,6 +146,9 @@ app.post('/render', authenticate, async (req, res) => {
           text: chunk.map(w => w.word).join(' ').toUpperCase()
         });
       }
+
+      console.log("[DEBUG] Segments", segments)
+
     } catch (transcribeError) {
       console.error(`[Job ${postId}] Transcription failed:`, transcribeError.message);
       return res.status(500).json({ error: `Transcription failed: ${transcribeError.message}` });
