@@ -86,10 +86,48 @@ app.get('/health', (req, res) => {
 
 // Main rendering endpoint
 app.post('/render', authenticate, async (req, res) => {
-  const { postId, cleanVideoUrl, captionStyle, segments } = req.body;
+  let { postId, cleanVideoUrl, captionStyle, segments } = req.body;
 
-  if (!cleanVideoUrl || !segments || !captionStyle) {
-    return res.status(400).json({ error: 'Missing cleanVideoUrl, segments, or captionStyle' });
+  if (!cleanVideoUrl || !captionStyle) {
+    return res.status(400).json({ error: 'Missing cleanVideoUrl or captionStyle' });
+  }
+
+  // --- Auto-Transcribe if segments are missing ---
+  if (!segments || segments.length === 0) {
+    console.log(`[Job ${postId}] Segments missing. Requesting transcription from Supabase...`);
+    try {
+      const whisperRes = await axios.post(`${process.env.SUPABASE_URL}/functions/v1/whisper-transcribe`,
+        { videoUrl: cleanVideoUrl },
+        { 
+          headers: { 
+            'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, 
+            'Content-Type': 'application/json' 
+          },
+          timeout: 120000 // 2 minute timeout for Whisper
+        }
+      );
+
+      const { words } = whisperRes.data;
+      if (!words || words.length === 0) {
+        throw new Error('Whisper returned no words.');
+      }
+
+      console.log(`[Job ${postId}] Transcribed ${words.length} words. Formatting segments...`);
+      
+      // Format segments (3 words per screen)
+      segments = [];
+      for (let i = 0; i < words.length; i += 3) {
+        const chunk = words.slice(i, i + 3);
+        segments.push({
+          startMs: Math.round(chunk[0].start * 1000),
+          endMs: Math.round(chunk[chunk.length - 1].end * 1000),
+          text: chunk.map(w => w.word).join(' ').toUpperCase()
+        });
+      }
+    } catch (transcribeError) {
+      console.error(`[Job ${postId}] Transcription failed:`, transcribeError.message);
+      return res.status(500).json({ error: `Transcription failed: ${transcribeError.message}` });
+    }
   }
 
   // Create a unique temporary working directory
