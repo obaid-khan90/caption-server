@@ -52,6 +52,7 @@ function msToAssTime(ms) {
 
 // Convert Hex to ASS BGR color
 function hexToAssBgr(hex) {
+  if (!hex || typeof hex !== 'string') return '&H00FFFFFF';
   const h = hex.replace('#', '');
   const r = h.slice(0, 2);
   const g = h.slice(2, 4);
@@ -61,6 +62,7 @@ function hexToAssBgr(hex) {
 
 // Convert RGBA string to ASS BackColor format
 function rgbaToAssBackColor(rgba) {
+  if (!rgba || typeof rgba !== 'string') return '&H80000000';
   const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
   if (!match) return '&H80000000';
   const r = parseInt(match[1]).toString(16).padStart(2, '0');
@@ -87,44 +89,269 @@ function buildAnimationTag(animation) {
   switch (animation) {
     case 'fade':
       return '{\\fad(120,120)}';
-    case 'pop':
-      return '{\\t(0,120,\\fscx120\\fscy120)\\t(120,220,\\fscx100\\fscy100)}';
     default:
       return '';
   }
 }
 
-function buildKaraokeText(seg, captionStyle) {
-  const words = Array.isArray(seg.words) ? seg.words : [];
-  if (words.length === 0) {
-    return escapeAssText(seg.text || '');
+function buildHighlightedWordTag(captionStyle) {
+  const primary = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
+  const outline = hexToAssBgr(captionStyle.outlineColor || '#000000');
+  const effect = captionStyle.wordEffect || captionStyle.effect || 'karaoke-fill';
+
+  if (effect === 'karaoke-outline') {
+    return `{\\1c${primary}\\3c${primary}\\bord${Math.max(2, Number(captionStyle.outlineWidth || 2) + 1)}}`;
   }
 
-  const effect = captionStyle.wordEffect || captionStyle.effect || 'karaoke-fill';
-  const karaokeTag = effect === 'karaoke-outline'
-    ? '\\ko'
-    : effect === 'karaoke'
-      ? '\\k'
-      : '\\kf';
+  if (effect === 'karaoke') {
+    return `{\\1c${primary}\\b1}`;
+  }
 
-  return words.map((word, index) => {
-    const currentStart = Number(word.startMs ?? seg.startMs ?? 0);
-    const nextStart = Number(words[index + 1]?.startMs ?? word.endMs ?? seg.endMs ?? currentStart + 10);
-    const currentEnd = Number(word.endMs ?? nextStart);
-    const durationMs = Math.max(
-      10,
-      index < words.length - 1 ? nextStart - currentStart : currentEnd - currentStart
-    );
-    const durationCs = msToAssCentiseconds(durationMs);
-    const spacer = index < words.length - 1 ? ' ' : '';
-    return `{${karaokeTag}${durationCs}}${escapeAssText(word.text || '')}${spacer}`;
-  }).join('');
+  return `{\\1c${primary}\\3c${outline}\\b1}`;
 }
 
-function buildDialogueText(seg, captionStyle) {
-  const animationTag = buildAnimationTag(captionStyle.animation);
-  const text = buildKaraokeText(seg, captionStyle);
-  return `${animationTag}${text}`;
+function buildWordAnimationTag(animation) {
+  switch (animation) {
+    case 'pop':
+      return '{\\fscx120\\fscy120\\t(0,120,\\fscx100\\fscy100)}';
+    default:
+      return '';
+  }
+}
+
+function buildWordScopedText(words, activeIndex, captionStyle) {
+  const activeWordTag = `${buildHighlightedWordTag(captionStyle)}${buildWordAnimationTag(captionStyle.animation)}`;
+
+  return words.map((word, index) => {
+    const escapedText = escapeAssText(word.text || '');
+    if (index !== activeIndex) {
+      return escapedText;
+    }
+
+    return `${activeWordTag}${escapedText}{\\rDefault}`;
+  }).join(' ');
+}
+
+function buildSegmentDialogueEvents(seg, captionStyle) {
+  const words = Array.isArray(seg.words) ? seg.words.filter(word => word.text) : [];
+  const lineAnimationTag = buildAnimationTag(captionStyle.animation);
+
+  if (words.length === 0) {
+    return [
+      {
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+        text: `${lineAnimationTag}${escapeAssText(seg.text || '')}`
+      }
+    ];
+  }
+
+  return words.map((word, index) => {
+    const startMs = Number(word.startMs ?? seg.startMs ?? 0);
+    const nextStartMs = Number(words[index + 1]?.startMs ?? word.endMs ?? seg.endMs ?? startMs + 10);
+    const endMs = Math.max(startMs + 10, Number(word.endMs ?? nextStartMs ?? seg.endMs ?? startMs + 10));
+    const scopedText = buildWordScopedText(words, index, captionStyle);
+
+    return {
+      startMs,
+      endMs,
+      text: `${lineAnimationTag}${scopedText}`
+    };
+  });
+}
+
+const CAPTION_STYLE_PRESETS = {
+  Minimal: {
+    fontFamily: 'Arial',
+    fontSize: 24,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 1,
+    shadowSize: 0,
+    bold: false,
+    italic: false,
+    spacing: 0,
+    borderStyle: 1
+  },
+  'Clean Black': {
+    fontFamily: 'Arial',
+    fontSize: 26,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    outlineColor: '#000000',
+    outlineWidth: 0,
+    shadowSize: 0,
+    bold: true,
+    italic: false,
+    spacing: 0,
+    borderStyle: 3
+  },
+  'Outline White': {
+    fontFamily: 'Arial',
+    fontSize: 26,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 3,
+    shadowSize: 0,
+    bold: true,
+    italic: false,
+    spacing: 0,
+    borderStyle: 1
+  },
+  'Outline Yellow': {
+    fontFamily: 'Arial',
+    fontSize: 26,
+    fontColor: '#FFD400',
+    highlightColor: '#FFF2A8',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 3,
+    shadowSize: 0,
+    bold: true,
+    italic: false,
+    spacing: 0,
+    borderStyle: 1
+  },
+  'Shadow White': {
+    fontFamily: 'Arial',
+    fontSize: 26,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 1,
+    shadowSize: 2,
+    bold: true,
+    italic: false,
+    spacing: 0,
+    borderStyle: 1
+  },
+  'Shadow Yellow': {
+    fontFamily: 'Arial',
+    fontSize: 26,
+    fontColor: '#FFD400',
+    highlightColor: '#FFF2A8',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 1,
+    shadowSize: 2,
+    bold: true,
+    italic: false,
+    spacing: 0,
+    borderStyle: 1
+  },
+  'Bold White': {
+    fontFamily: 'Arial Black',
+    fontSize: 28,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 2,
+    shadowSize: 0,
+    bold: true,
+    italic: false,
+    spacing: 0.5,
+    borderStyle: 1
+  },
+  'MrBeast Yellow': {
+    fontFamily: 'Arial Black',
+    fontSize: 30,
+    fontColor: '#FFD400',
+    highlightColor: '#FFF2A8',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#000000',
+    outlineWidth: 4,
+    shadowSize: 0,
+    bold: true,
+    italic: false,
+    spacing: 0.5,
+    borderStyle: 1
+  },
+  'Neon Cyan': {
+    fontFamily: 'Arial Black',
+    fontSize: 28,
+    fontColor: '#7DF9FF',
+    highlightColor: '#C9FDFF',
+    backgroundColor: 'rgba(0,0,0,0)',
+    outlineColor: '#00343A',
+    outlineWidth: 2,
+    shadowSize: 2,
+    bold: true,
+    italic: false,
+    spacing: 0.5,
+    borderStyle: 1
+  },
+  'Cinema Black': {
+    fontFamily: 'Arial',
+    fontSize: 24,
+    fontColor: '#FFFFFF',
+    highlightColor: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    outlineColor: '#000000',
+    outlineWidth: 0,
+    shadowSize: 0,
+    bold: false,
+    italic: false,
+    spacing: 0.3,
+    borderStyle: 3
+  }
+};
+
+function resolveCaptionStyle(style = {}) {
+  const defaultStyle = {
+    fontFamily: 'Arial',
+    fontSize: 24,
+    fontColor: '#FFFFFF',
+    highlightColor: style.fontColor || '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    outlineColor: '#000000',
+    outlineWidth: 2,
+    shadowSize: 0,
+    bold: false,
+    italic: false,
+    spacing: 0,
+    borderStyle: 3,
+    position: 'bottom',
+    wordEffect: 'karaoke-fill',
+    animation: undefined
+  };
+
+  const presetStyle = style.stylePreset ? CAPTION_STYLE_PRESETS[style.stylePreset] || {} : {};
+  const resolved = { ...defaultStyle, ...presetStyle, ...style };
+
+  if (!resolved.highlightColor) {
+    resolved.highlightColor = resolved.fontColor;
+  }
+
+  return resolved;
+}
+
+function probeVideoDimensions(videoPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(videoPath, (err, metadata) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      const videoStream = (metadata.streams || []).find(stream => stream.codec_type === 'video');
+      const width = Number(videoStream?.width);
+      const height = Number(videoStream?.height);
+
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        reject(new Error('Unable to determine video dimensions from ffprobe.'));
+        return;
+      }
+
+      resolve({ width, height });
+    });
+  });
 }
 
 function shouldBreakSegment(currentWords, nextWord, segmentStartMs) {
@@ -205,6 +432,8 @@ app.post('/render', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Missing cleanVideoUrl or captionStyle' });
   }
 
+  captionStyle = resolveCaptionStyle(captionStyle);
+
   // --- Auto-Transcribe if segments are missing ---
   if (!segments || segments.length === 0) {
     console.log(`[Job ${postId}] Segments missing. Requesting transcription from Supabase...`);
@@ -282,22 +511,42 @@ app.post('/render', authenticate, async (req, res) => {
       writer.on('error', reject);
     });
 
+    let playResX = 720;
+    let playResY = 1280;
+
+    try {
+      const dimensions = await probeVideoDimensions(inputPath);
+      playResX = dimensions.width;
+      playResY = dimensions.height;
+      console.log(`[Job ${postId}] Using detected subtitle canvas ${playResX}x${playResY}.`);
+    } catch (probeError) {
+      console.warn(`[Job ${postId}] Failed to detect video dimensions, using fallback canvas 720x1280:`, probeError.message);
+    }
+
     // 2. Generate ASS Subtitle file
     console.log(`[Job ${postId}] Generating styling payload...`);
     const primaryColour = hexToAssBgr(captionStyle.fontColor);
     const secondaryColour = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
+    const outlineColour = hexToAssBgr(captionStyle.outlineColor);
     const backColour = rgbaToAssBackColor(captionStyle.backgroundColor);
     const alignment = captionStyle.position === 'top' ? 8 : captionStyle.position === 'middle' ? 5 : 2;
-    const marginV = captionStyle.position === 'bottom' ? 30 : captionStyle.position === 'top' ? 30 : 0;
-
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${captionStyle.fontSize},${primaryColour},${secondaryColour},&H00000000,${backColour},0,0,0,0,100,100,0,0,3,2,0,${alignment},10,10,${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+    const baseMarginV = Math.max(24, Math.round(playResY * 0.04));
+    const marginV = captionStyle.position === 'bottom' ? baseMarginV : captionStyle.position === 'top' ? baseMarginV : 0;
+    const bold = captionStyle.bold ? -1 : 0;
+    const italic = captionStyle.italic ? -1 : 0;
+    const outlineWidth = Number.isFinite(Number(captionStyle.outlineWidth)) ? Number(captionStyle.outlineWidth) : 2;
+    const shadowSize = Number.isFinite(Number(captionStyle.shadowSize)) ? Number(captionStyle.shadowSize) : 0;
+    const spacing = Number.isFinite(Number(captionStyle.spacing)) ? Number(captionStyle.spacing) : 0;
+    const borderStyle = Number.isFinite(Number(captionStyle.borderStyle)) ? Number(captionStyle.borderStyle) : 3;
+    const marginH = Math.max(10, Math.round(playResX * 0.015));
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${captionStyle.fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${outlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
-      .map(seg => {
-        const start = msToAssTime(seg.startMs);
-        const end = msToAssTime(seg.endMs);
-        const text = buildDialogueText(seg, captionStyle);
-        return `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`;
+      .flatMap(seg => buildSegmentDialogueEvents(seg, captionStyle))
+      .map(event => {
+        const start = msToAssTime(event.startMs);
+        const end = msToAssTime(event.endMs);
+        return `Dialogue: 0,${start},${end},Default,,0,0,0,,${event.text}`;
       })
       .join('\n');
 
