@@ -99,16 +99,17 @@ const CAPTION_STYLE_PRESETS = {
   },
   'MrBeast Yellow': {
     fontFamily: 'Arial Black',
-    fontSize: 38,
+    fontSize: 42,
     fontColor: '#FFDD00',
     highlightColor: '#FFF199',
     backgroundColor: 'rgba(0,0,0,0)',
     outlineColor: '#000000',
-    outlineWidth: 5,
+    outlineWidth: 6,
     shadowSize: 1,
+    boxPadding: 8,
     bold: true,
     italic: false,
-    spacing: 0.8,
+    spacing: 1,
     borderStyle: 1
   },
   'Neon Cyan': {

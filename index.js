@@ -114,7 +114,7 @@ function buildHighlightedWordTag(captionStyle) {
 function buildWordAnimationTag(animation) {
   switch (animation) {
     case 'pop':
-      return '{\\fscx120\\fscy120\\t(0,120,\\fscx100\\fscy100)}';
+      return '{\\fscx135\\fscy135\\t(0,160,\\fscx100\\fscy100)}';
     default:
       return '';
   }
@@ -136,6 +136,7 @@ function buildWordScopedText(words, activeIndex, captionStyle) {
 function buildSegmentDialogueEvents(seg, captionStyle) {
   const words = Array.isArray(seg.words) ? seg.words.filter(word => word.text) : [];
   const lineAnimationTag = buildAnimationTag(captionStyle.animation);
+  const minWordDurationMs = 180;
 
   if (words.length === 0) {
     return [
@@ -150,7 +151,8 @@ function buildSegmentDialogueEvents(seg, captionStyle) {
   return words.map((word, index) => {
     const startMs = Number(word.startMs ?? seg.startMs ?? 0);
     const nextStartMs = Number(words[index + 1]?.startMs ?? word.endMs ?? seg.endMs ?? startMs + 10);
-    const endMs = Math.max(startMs + 10, Number(word.endMs ?? nextStartMs ?? seg.endMs ?? startMs + 10));
+    const naturalEndMs = Number(word.endMs ?? nextStartMs ?? seg.endMs ?? startMs + minWordDurationMs);
+    const endMs = Math.max(startMs + minWordDurationMs, naturalEndMs);
     const scopedText = buildWordScopedText(words, index, captionStyle);
 
     return {
@@ -192,6 +194,7 @@ function resolveCaptionStyle(style = {}) {
     outlineColor: '#000000',
     outlineWidth: 2,
     shadowSize: 0,
+    boxPadding: 6,
     bold: false,
     italic: false,
     spacing: 0,
@@ -211,6 +214,7 @@ function resolveCaptionStyle(style = {}) {
     'outlineColor',
     'outlineWidth',
     'shadowSize',
+    'boxPadding',
     'bold',
     'italic',
     'spacing',
@@ -441,12 +445,14 @@ app.post('/render', authenticate, async (req, res) => {
     const italic = captionStyle.italic ? -1 : 0;
     const fontScale = Math.max(1, playResY / 1280);
     const fontSize = Math.max(24, Math.round(Number(captionStyle.fontSize || 24) * fontScale));
+    const borderStyle = Number.isFinite(Number(captionStyle.borderStyle)) ? Number(captionStyle.borderStyle) : 3;
     const outlineWidth = Number.isFinite(Number(captionStyle.outlineWidth)) ? Number(captionStyle.outlineWidth) : 2;
+    const boxPadding = Number.isFinite(Number(captionStyle.boxPadding)) ? Number(captionStyle.boxPadding) : 6;
+    const effectiveOutlineWidth = borderStyle === 3 ? Math.max(outlineWidth, boxPadding) : outlineWidth;
     const shadowSize = Number.isFinite(Number(captionStyle.shadowSize)) ? Number(captionStyle.shadowSize) : 0;
     const spacing = Number.isFinite(Number(captionStyle.spacing)) ? Number(captionStyle.spacing) : 0;
-    const borderStyle = Number.isFinite(Number(captionStyle.borderStyle)) ? Number(captionStyle.borderStyle) : 3;
     const marginH = Math.max(10, Math.round(playResX * 0.015));
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${outlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${effectiveOutlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
       .flatMap(seg => buildSegmentDialogueEvents(seg, captionStyle))
