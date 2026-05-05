@@ -39,12 +39,24 @@ Main limitations identified initially:
 
 ### 1. Added word-level karaoke support
 
-The render pipeline now supports word-timed ASS output instead of only plain line text.
+Original behavior:
+
+- one subtitle event was created for the whole caption line
+- captions were rendered as plain line text
+- there was no true active-word behavior
+
+Upgraded behavior:
+
+- segments now preserve per-word timing data
+- the renderer now creates one timed ASS dialogue event per active spoken word
+- each event still shows the full caption line
+- only the currently spoken word gets highlight styling
+- plain text remains as a fallback when word timing is unavailable
 
 Implemented:
 
 - preservation of per-word timing in generated segments
-- ASS karaoke tag generation
+- active-word scoped ASS rendering
 - fallback to plain text when word timing is not available
 
 Supported `wordEffect` values:
@@ -66,7 +78,19 @@ Implemented:
 - `fade`
 - `pop`
 
-These are injected as ASS override tags per subtitle line.
+Original behavior:
+
+- there was no animation support
+
+Upgraded behavior:
+
+- `fade` can be applied to caption events
+- `pop` now applies only to the active spoken word, not the entire line
+
+Notes:
+
+- `fade` remains line/event scoped
+- `pop` is now word scoped
 
 Supported `animation` values:
 
@@ -79,11 +103,27 @@ Implemented:
 
 - `highlightColor`
 
-This is used as the ASS `SecondaryColour`, which works with karaoke styling.
+Original behavior:
+
+- only a base font color existed
+
+Upgraded behavior:
+
+- a separate `highlightColor` is now supported
+- active-word highlighting uses this color
+- if not supplied, it falls back to `fontColor`
 
 ### 4. Replaced fixed 3-word auto-segmentation
 
-The original hardcoded segmentation logic has been removed for auto-transcribed captions.
+Original behavior:
+
+- transcription words were grouped in fixed `3-word` chunks
+- segments did not break on pauses, punctuation, or reading rhythm
+
+Upgraded behavior:
+
+- the hardcoded `3-word` split has been removed for auto-transcribed captions
+- segmentation is now rule-based and automatic for all transcription requests
 
 It now uses a built-in smart segmentation approach that automatically breaks on:
 
@@ -95,15 +135,65 @@ It now uses a built-in smart segmentation approach that automatically breaks on:
 
 This improved natural phrasing without requiring any new API parameters.
 
+### 5. Added dynamic subtitle canvas sizing
+
+Original behavior:
+
+- ASS subtitles were always authored against a fixed `720x1280` canvas
+- margins were fixed for that assumed frame size
+
+Upgraded behavior:
+
+- the input video is now probed with `ffprobe`
+- `PlayResX` and `PlayResY` are now set from the real video dimensions
+- horizontal and vertical margins scale from the actual frame size
+- if probing fails, the server falls back to `720x1280`
+
+This makes caption placement more reliable across portrait and landscape videos.
+
+### 6. Added preset-based caption styling
+
+Original behavior:
+
+- the server only accepted raw style properties
+- there were no named presets
+
+Upgraded behavior:
+
+- the server now supports named preset styles through `captionStyle.stylePreset`
+- preset values are mapped into ASS-friendly style properties
+- explicit style fields still override the preset when provided
+
+Currently supported presets:
+
+- `Minimal`
+- `Clean Black`
+- `Outline White`
+- `Outline Yellow`
+- `Shadow White`
+- `Shadow Yellow`
+- `Bold White`
+- `MrBeast Yellow`
+- `Neon Cyan`
+- `Cinema Black`
+
 ## Current CaptionStyle Support
 
 The code currently supports these `captionStyle` inputs:
 
+- `stylePreset`
 - `fontFamily`
 - `fontSize`
 - `fontColor`
 - `highlightColor`
 - `backgroundColor`
+- `outlineColor`
+- `outlineWidth`
+- `shadowSize`
+- `bold`
+- `italic`
+- `spacing`
+- `borderStyle`
 - `position`
 - `wordEffect`
 - `animation`
@@ -240,9 +330,12 @@ Recommended rollout order:
 Current status:
 
 - the server is no longer limited to fixed `3-word` transcription chunks
-- karaoke-style per-word highlighting is now supported
-- basic line animation is now supported
+- active-word highlighting is now supported instead of full-line highlighting
+- `pop` animation is now active-word scoped
+- `fade` animation is supported
 - highlight color is now supported
+- dynamic subtitle canvas sizing is now supported
+- preset-based caption styling is now supported
 - the API contract has only lightly changed and remains simple
 
 Not done yet:

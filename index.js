@@ -8,6 +8,7 @@ const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { CAPTION_STYLE_PRESETS } = require('./caption-style-presets');
 require('dotenv').config();
 
 // Initialize Express app
@@ -160,148 +161,26 @@ function buildSegmentDialogueEvents(seg, captionStyle) {
   });
 }
 
-const CAPTION_STYLE_PRESETS = {
-  Minimal: {
-    fontFamily: 'Arial',
-    fontSize: 24,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 1,
-    shadowSize: 0,
-    bold: false,
-    italic: false,
-    spacing: 0,
-    borderStyle: 1
-  },
-  'Clean Black': {
-    fontFamily: 'Arial',
-    fontSize: 26,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0.72)',
-    outlineColor: '#000000',
-    outlineWidth: 0,
-    shadowSize: 0,
-    bold: true,
-    italic: false,
-    spacing: 0,
-    borderStyle: 3
-  },
-  'Outline White': {
-    fontFamily: 'Arial',
-    fontSize: 26,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 3,
-    shadowSize: 0,
-    bold: true,
-    italic: false,
-    spacing: 0,
-    borderStyle: 1
-  },
-  'Outline Yellow': {
-    fontFamily: 'Arial',
-    fontSize: 26,
-    fontColor: '#FFD400',
-    highlightColor: '#FFF2A8',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 3,
-    shadowSize: 0,
-    bold: true,
-    italic: false,
-    spacing: 0,
-    borderStyle: 1
-  },
-  'Shadow White': {
-    fontFamily: 'Arial',
-    fontSize: 26,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 1,
-    shadowSize: 2,
-    bold: true,
-    italic: false,
-    spacing: 0,
-    borderStyle: 1
-  },
-  'Shadow Yellow': {
-    fontFamily: 'Arial',
-    fontSize: 26,
-    fontColor: '#FFD400',
-    highlightColor: '#FFF2A8',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 1,
-    shadowSize: 2,
-    bold: true,
-    italic: false,
-    spacing: 0,
-    borderStyle: 1
-  },
-  'Bold White': {
-    fontFamily: 'Arial Black',
-    fontSize: 28,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 2,
-    shadowSize: 0,
-    bold: true,
-    italic: false,
-    spacing: 0.5,
-    borderStyle: 1
-  },
-  'MrBeast Yellow': {
-    fontFamily: 'Arial Black',
-    fontSize: 30,
-    fontColor: '#FFD400',
-    highlightColor: '#FFF2A8',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#000000',
-    outlineWidth: 4,
-    shadowSize: 0,
-    bold: true,
-    italic: false,
-    spacing: 0.5,
-    borderStyle: 1
-  },
-  'Neon Cyan': {
-    fontFamily: 'Arial Black',
-    fontSize: 28,
-    fontColor: '#7DF9FF',
-    highlightColor: '#C9FDFF',
-    backgroundColor: 'rgba(0,0,0,0)',
-    outlineColor: '#00343A',
-    outlineWidth: 2,
-    shadowSize: 2,
-    bold: true,
-    italic: false,
-    spacing: 0.5,
-    borderStyle: 1
-  },
-  'Cinema Black': {
-    fontFamily: 'Arial',
-    fontSize: 24,
-    fontColor: '#FFFFFF',
-    highlightColor: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0.82)',
-    outlineColor: '#000000',
-    outlineWidth: 0,
-    shadowSize: 0,
-    bold: false,
-    italic: false,
-    spacing: 0.3,
-    borderStyle: 3
+function normalizeComparableValue(value) {
+  if (typeof value === 'string') {
+    return value.trim().toLowerCase();
   }
-};
+
+  return value;
+}
+
+function shouldUseRequestOverride(key, value, defaultStyle) {
+  if (value === undefined || value === null || value === '') {
+    return false;
+  }
+
+  const defaultValue = defaultStyle[key];
+  if (defaultValue === undefined) {
+    return true;
+  }
+
+  return normalizeComparableValue(value) !== normalizeComparableValue(defaultValue);
+}
 
 function resolveCaptionStyle(style = {}) {
   const defaultStyle = {
@@ -323,7 +202,32 @@ function resolveCaptionStyle(style = {}) {
   };
 
   const presetStyle = style.stylePreset ? CAPTION_STYLE_PRESETS[style.stylePreset] || {} : {};
-  const resolved = { ...defaultStyle, ...presetStyle, ...style };
+  const visualKeys = [
+    'fontFamily',
+    'fontSize',
+    'fontColor',
+    'highlightColor',
+    'backgroundColor',
+    'outlineColor',
+    'outlineWidth',
+    'shadowSize',
+    'bold',
+    'italic',
+    'spacing',
+    'borderStyle'
+  ];
+
+  const styleOverrides = { ...style };
+
+  if (style.stylePreset) {
+    for (const key of visualKeys) {
+      if (!shouldUseRequestOverride(key, style[key], defaultStyle)) {
+        delete styleOverrides[key];
+      }
+    }
+  }
+
+  const resolved = { ...defaultStyle, ...presetStyle, ...styleOverrides };
 
   if (!resolved.highlightColor) {
     resolved.highlightColor = resolved.fontColor;
@@ -530,16 +434,19 @@ app.post('/render', authenticate, async (req, res) => {
     const outlineColour = hexToAssBgr(captionStyle.outlineColor);
     const backColour = rgbaToAssBackColor(captionStyle.backgroundColor);
     const alignment = captionStyle.position === 'top' ? 8 : captionStyle.position === 'middle' ? 5 : 2;
-    const baseMarginV = Math.max(24, Math.round(playResY * 0.04));
-    const marginV = captionStyle.position === 'bottom' ? baseMarginV : captionStyle.position === 'top' ? baseMarginV : 0;
+    const topMarginV = Math.max(32, Math.round(playResY * 0.05));
+    const bottomMarginV = Math.max(56, Math.round(playResY * 0.08));
+    const marginV = captionStyle.position === 'bottom' ? bottomMarginV : captionStyle.position === 'top' ? topMarginV : 0;
     const bold = captionStyle.bold ? -1 : 0;
     const italic = captionStyle.italic ? -1 : 0;
+    const fontScale = Math.max(1, playResY / 1280);
+    const fontSize = Math.max(24, Math.round(Number(captionStyle.fontSize || 24) * fontScale));
     const outlineWidth = Number.isFinite(Number(captionStyle.outlineWidth)) ? Number(captionStyle.outlineWidth) : 2;
     const shadowSize = Number.isFinite(Number(captionStyle.shadowSize)) ? Number(captionStyle.shadowSize) : 0;
     const spacing = Number.isFinite(Number(captionStyle.spacing)) ? Number(captionStyle.spacing) : 0;
     const borderStyle = Number.isFinite(Number(captionStyle.borderStyle)) ? Number(captionStyle.borderStyle) : 3;
     const marginH = Math.max(10, Math.round(playResX * 0.015));
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${captionStyle.fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${outlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${outlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
       .flatMap(seg => buildSegmentDialogueEvents(seg, captionStyle))
