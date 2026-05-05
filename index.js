@@ -71,6 +71,62 @@ function rgbaToAssBackColor(rgba) {
   return `&H${a}${b}${g}${r}`;
 }
 
+function msToAssCentiseconds(ms) {
+  return Math.max(1, Math.round(ms / 10));
+}
+
+function escapeAssText(text = '') {
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/\{/g, '\\{')
+    .replace(/\}/g, '\\}')
+    .replace(/\n/g, '\\N');
+}
+
+function buildAnimationTag(animation) {
+  switch (animation) {
+    case 'fade':
+      return '{\\fad(120,120)}';
+    case 'pop':
+      return '{\\t(0,120,\\fscx120\\fscy120)\\t(120,220,\\fscx100\\fscy100)}';
+    default:
+      return '';
+  }
+}
+
+function buildKaraokeText(seg, captionStyle) {
+  const words = Array.isArray(seg.words) ? seg.words : [];
+  if (words.length === 0) {
+    return escapeAssText(seg.text || '');
+  }
+
+  const effect = captionStyle.wordEffect || captionStyle.effect || 'karaoke-fill';
+  const karaokeTag = effect === 'karaoke-outline'
+    ? '\\ko'
+    : effect === 'karaoke'
+      ? '\\k'
+      : '\\kf';
+
+  return words.map((word, index) => {
+    const currentStart = Number(word.startMs ?? seg.startMs ?? 0);
+    const nextStart = Number(words[index + 1]?.startMs ?? word.endMs ?? seg.endMs ?? currentStart + 10);
+    const currentEnd = Number(word.endMs ?? nextStart);
+    const durationMs = Math.max(
+      10,
+      index < words.length - 1 ? nextStart - currentStart : currentEnd - currentStart
+    );
+    const durationCs = msToAssCentiseconds(durationMs);
+    const spacer = index < words.length - 1 ? ' ' : '';
+    return `{${karaokeTag}${durationCs}}${escapeAssText(word.text || '')}${spacer}`;
+  }).join('');
+}
+
+function buildDialogueText(seg, captionStyle) {
+  const animationTag = buildAnimationTag(captionStyle.animation);
+  const text = buildKaraokeText(seg, captionStyle);
+  return `${animationTag}${text}`;
+}
+
 // --- Auth Middleware ---
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -145,7 +201,12 @@ app.post('/render', authenticate, async (req, res) => {
         segments.push({
           startMs: Math.round(chunk[0].start * 1000),
           endMs: Math.round(chunk[chunk.length - 1].end * 1000),
-          text: chunk.map(w => w.word).join(' ').toUpperCase()
+          text: chunk.map(w => w.word).join(' ').toUpperCase(),
+          words: chunk.map(w => ({
+            text: String(w.word || '').toUpperCase(),
+            startMs: Math.round(w.start * 1000),
+            endMs: Math.round(w.end * 1000)
+          }))
         });
       }
 
@@ -186,17 +247,18 @@ app.post('/render', authenticate, async (req, res) => {
     // 2. Generate ASS Subtitle file
     console.log(`[Job ${postId}] Generating styling payload...`);
     const primaryColour = hexToAssBgr(captionStyle.fontColor);
+    const secondaryColour = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
     const backColour = rgbaToAssBackColor(captionStyle.backgroundColor);
     const alignment = captionStyle.position === 'top' ? 8 : captionStyle.position === 'middle' ? 5 : 2;
     const marginV = captionStyle.position === 'bottom' ? 30 : captionStyle.position === 'top' ? 30 : 0;
 
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${captionStyle.fontSize},${primaryColour},&H00FFFFFF,&H00000000,${backColour},0,0,0,0,100,100,0,0,3,2,0,${alignment},10,10,${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${captionStyle.fontSize},${primaryColour},${secondaryColour},&H00000000,${backColour},0,0,0,0,100,100,0,0,3,2,0,${alignment},10,10,${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
       .map(seg => {
         const start = msToAssTime(seg.startMs);
         const end = msToAssTime(seg.endMs);
-        const text = seg.text.replace(/\n/g, '\\N');
+        const text = buildDialogueText(seg, captionStyle);
         return `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`;
       })
       .join('\n');
