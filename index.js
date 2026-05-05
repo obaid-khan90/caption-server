@@ -127,6 +127,59 @@ function buildDialogueText(seg, captionStyle) {
   return `${animationTag}${text}`;
 }
 
+function shouldBreakSegment(currentWords, nextWord, segmentStartMs) {
+  if (!nextWord) return true;
+
+  const currentText = currentWords.map(word => word.text).join(' ');
+  const lastWord = currentWords[currentWords.length - 1];
+  const segmentDurationMs = Math.max(0, lastWord.endMs - segmentStartMs);
+  const pauseAfterMs = Math.max(0, nextWord.startMs - lastWord.endMs);
+  const endsWithPunctuation = /[.!?,:;]$/.test(lastWord.text);
+
+  if (currentWords.length >= 5) return true;
+  if (currentText.length >= 28) return true;
+  if (segmentDurationMs >= 2200) return true;
+  if (pauseAfterMs >= 350) return true;
+  if (endsWithPunctuation && currentWords.length >= 2) return true;
+
+  return false;
+}
+
+function buildSmartSegments(words) {
+  const normalizedWords = words
+    .map(word => ({
+      text: String(word.word || word.text || '').trim().toUpperCase(),
+      startMs: Math.round(Number(word.startMs ?? (word.start * 1000))),
+      endMs: Math.round(Number(word.endMs ?? (word.end * 1000)))
+    }))
+    .filter(word => word.text && Number.isFinite(word.startMs) && Number.isFinite(word.endMs));
+
+  const segments = [];
+  let currentWords = [];
+
+  for (let i = 0; i < normalizedWords.length; i += 1) {
+    const currentWord = normalizedWords[i];
+    const nextWord = normalizedWords[i + 1];
+
+    currentWords.push(currentWord);
+
+    if (!shouldBreakSegment(currentWords, nextWord, currentWords[0].startMs)) {
+      continue;
+    }
+
+    segments.push({
+      startMs: currentWords[0].startMs,
+      endMs: currentWords[currentWords.length - 1].endMs,
+      text: currentWords.map(word => word.text).join(' '),
+      words: currentWords
+    });
+
+    currentWords = [];
+  }
+
+  return segments;
+}
+
 // --- Auth Middleware ---
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -192,23 +245,8 @@ app.post('/render', authenticate, async (req, res) => {
         throw new Error('Whisper returned no words.');
       }
 
-      console.log(`[Job ${postId}] Transcribed ${words.length} words. Formatting segments...`);
-
-      // Format segments (3 words per screen)
-      segments = [];
-      for (let i = 0; i < words.length; i += 3) {
-        const chunk = words.slice(i, i + 3);
-        segments.push({
-          startMs: Math.round(chunk[0].start * 1000),
-          endMs: Math.round(chunk[chunk.length - 1].end * 1000),
-          text: chunk.map(w => w.word).join(' ').toUpperCase(),
-          words: chunk.map(w => ({
-            text: String(w.word || '').toUpperCase(),
-            startMs: Math.round(w.start * 1000),
-            endMs: Math.round(w.end * 1000)
-          }))
-        });
-      }
+      console.log(`[Job ${postId}] Transcribed ${words.length} words. Formatting smart segments...`);
+      segments = buildSmartSegments(words);
 
       console.log("[DEBUG] Segments", segments)
 
