@@ -261,17 +261,48 @@ app.post('/render', authenticate, async (req, res) => {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(postId);
 
     if (postId && isUuid) {
+      console.log(`[Job ${postId}] Syncing results to database...`);
+
+      // Fetch existing record to preserve other media and get task ID
+      const { data: currentPost } = await supabase
+        .from('scheduled_posts')
+        .select('avatar_video_task_id, media_urls, preview_media_urls')
+        .eq('id', postId)
+        .single();
+
+      const existingUrls = currentPost?.media_urls || [];
+      const existingPreviewUrls = currentPost?.preview_media_urls || [];
+
+      // Filter out raw video URLs to avoid duplicates/stale links
+      const nonVideoUrls = existingUrls.filter(u => !u.match(/\.(mp4|mov|avi|webm)/i) || u === processedUrl);
+      const nonPreviewVideoUrls = existingPreviewUrls.filter(u => !u.match(/\.(mp4|mov|avi|webm)/i) || u === processedUrl);
+
       const { error: dbError } = await supabase
         .from('scheduled_posts')
         .update({
           caption_burn_output_url: processedUrl,
           caption_burn_task_status: 'completed',
-          media_urls: [processedUrl]
-
+          media_urls: [...new Set([...nonVideoUrls, processedUrl])],
+          preview_media_urls: [...new Set([...nonPreviewVideoUrls, processedUrl])],
+          caption_burn_completed_at: new Date().toISOString(),
         })
         .eq('id', postId);
 
-      if (dbError) console.error(`[Job ${postId}] Warning: Failed to update DB status:`, dbError);
+      if (dbError) console.error(`[Job ${postId}] Warning: Failed to update scheduled_posts:`, dbError);
+
+      // Also update media_library so the user sees the captioned version in their library
+      if (currentPost?.avatar_video_task_id) {
+        console.log(`[Job ${postId}] Updating media_library for task ${currentPost.avatar_video_task_id}`);
+        const { error: mlErr } = await supabase
+          .from('media_library')
+          .update({
+            public_url: processedUrl,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('ai_task_id', currentPost.avatar_video_task_id);
+
+        if (mlErr) console.error(`[Job ${postId}] Warning: Failed to update media_library:`, mlErr);
+      }
     } else {
       console.log(`[Job ${postId}] Skipping DB update (ID is not a valid UUID).`);
     }
