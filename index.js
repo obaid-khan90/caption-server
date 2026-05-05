@@ -271,7 +271,7 @@ app.post('/render', authenticate, async (req, res) => {
       } else {
         const existingUrls = currentPost.media_urls || [];
         const existingPreviewUrls = currentPost.preview_media_urls || [];
-        
+
         console.log(`[Job ${postId}] Current media_urls:`, existingUrls);
 
         // Filter out ANY .mp4 or .mov file that isn't our new processed URL.
@@ -309,10 +309,10 @@ app.post('/render', authenticate, async (req, res) => {
             .from('media_library')
             .update({
               public_url: processedUrl,
-              updated_at: new Date().toISOString(),
+              // updated_at: new Date().toISOString(),
             })
             .eq('ai_task_id', currentPost.avatar_video_task_id);
-          
+
           if (mlErr) console.error(`[Job ${postId}] Warning: Failed to update media_library:`, mlErr);
           else console.log(`[Job ${postId}] media_library updated successfully.`);
         }
