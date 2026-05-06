@@ -8,7 +8,7 @@ const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const { CAPTION_STYLE_PRESETS } = require('./caption-style-presets');
+const { getCaptionVariantConfig, normalizeVariantName } = require('./caption-variants');
 require('dotenv').config();
 
 // Initialize Express app
@@ -120,7 +120,7 @@ function buildWordAnimationTag(animation) {
   }
 }
 
-function buildWordScopedText(words, activeIndex, captionStyle) {
+function buildWordScopedText(words, activeIndex, captionStyle, continuationTag = '{\\rDefault}') {
   const activeWordTag = `${buildHighlightedWordTag(captionStyle)}${buildWordAnimationTag(captionStyle.animation)}`;
 
   return words.map((word, index) => {
@@ -129,13 +129,12 @@ function buildWordScopedText(words, activeIndex, captionStyle) {
       return escapedText;
     }
 
-    return `${activeWordTag}${escapedText}{\\rDefault}`;
+    return `${activeWordTag}${escapedText}${continuationTag}`;
   }).join(' ');
 }
 
 function buildSegmentDialogueEvents(seg, captionStyle) {
   const words = Array.isArray(seg.words) ? seg.words.filter(word => word.text) : [];
-  const lineAnimationTag = buildAnimationTag(captionStyle.animation);
   const minWordDurationMs = 180;
 
   if (words.length === 0) {
@@ -143,7 +142,9 @@ function buildSegmentDialogueEvents(seg, captionStyle) {
       {
         startMs: seg.startMs,
         endMs: seg.endMs,
-        text: `${lineAnimationTag}${escapeAssText(seg.text || '')}`
+        text: seg.text || '',
+        words: [],
+        activeIndex: -1
       }
     ];
   }
@@ -153,35 +154,254 @@ function buildSegmentDialogueEvents(seg, captionStyle) {
     const nextStartMs = Number(words[index + 1]?.startMs ?? word.endMs ?? seg.endMs ?? startMs + 10);
     const naturalEndMs = Number(word.endMs ?? nextStartMs ?? seg.endMs ?? startMs + minWordDurationMs);
     const endMs = Math.max(startMs + minWordDurationMs, naturalEndMs);
-    const scopedText = buildWordScopedText(words, index, captionStyle);
 
     return {
       startMs,
       endMs,
-      text: `${lineAnimationTag}${scopedText}`
+      text: seg.text || '',
+      words,
+      activeIndex: index
     };
   });
 }
 
-function normalizeComparableValue(value) {
-  if (typeof value === 'string') {
-    return value.trim().toLowerCase();
-  }
-
-  return value;
+function isTransparentBackground(backgroundColor) {
+  if (!backgroundColor || typeof backgroundColor !== 'string') return true;
+  return /rgba?\(\s*0\s*,\s*0\s*,\s*0\s*(?:,\s*0(?:\.0+)?)?\s*\)/i.test(backgroundColor);
 }
 
-function shouldUseRequestOverride(key, value, defaultStyle) {
-  if (value === undefined || value === null || value === '') {
-    return false;
+function resolveBasicVariantStyle(captionStyle, renderContext) {
+  const resolved = { ...captionStyle };
+  const strategy = captionStyle.variantConfig?.assStrategy || 'plain';
+  const defaultBoxBackground = 'rgba(0,0,0,0.72)';
+
+  switch (strategy) {
+    case 'box':
+      resolved.borderStyle = 3;
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 8);
+      if (isTransparentBackground(resolved.backgroundColor)) {
+        resolved.backgroundColor = defaultBoxBackground;
+      }
+      break;
+    case 'box-rounded':
+      resolved.borderStyle = 3;
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 14);
+      if (isTransparentBackground(resolved.backgroundColor)) {
+        resolved.backgroundColor = defaultBoxBackground;
+      }
+      break;
+    case 'subtitle-band':
+      resolved.borderStyle = 3;
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 24);
+      resolved.marginHorizontalRatio = 0.05;
+      if (isTransparentBackground(resolved.backgroundColor)) {
+        resolved.backgroundColor = 'rgba(0,0,0,0.82)';
+      }
+      break;
+    case 'outline':
+      resolved.borderStyle = 1;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2.5);
+      resolved.shadowSize = Number(resolved.shadowSize || 0);
+      break;
+    case 'outline-heavy':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 4);
+      resolved.shadowSize = Math.max(Number(resolved.shadowSize || 0), 0.5);
+      break;
+    case 'shadow-strong':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2);
+      resolved.shadowSize = Math.max(Number(resolved.shadowSize || 0), 3);
+      break;
+    case 'underline-bar':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.underline = true;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2.5);
+      break;
+    case 'colored-outline':
+      resolved.borderStyle = 1;
+      resolved.outlineColor = !isTransparentBackground(resolved.backgroundColor)
+        ? resolved.backgroundColor
+        : resolved.fontColor;
+      resolved.backgroundColor = 'rgba(0,0,0,0)';
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 3.5);
+      break;
+    case 'gradient-approx':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2.5);
+      resolved.backgroundColor = 'rgba(0,0,0,0)';
+      break;
+    case 'glass-panel-approx':
+      resolved.borderStyle = 3;
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 12);
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2);
+      resolved.outlineColor = '#FFFFFF';
+      if (isTransparentBackground(resolved.backgroundColor)) {
+        resolved.backgroundColor = 'rgba(20,20,20,0.45)';
+      }
+      break;
+    case 'warm-glow-approx':
+    case 'cool-glow-approx':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2.5);
+      resolved.shadowSize = Math.max(Number(resolved.shadowSize || 0), 1);
+      resolved.backgroundColor = 'rgba(0,0,0,0)';
+      break;
+    case 'plain':
+      resolved.borderStyle = 1;
+      resolved.outlineWidth = Number(resolved.outlineWidth || 0);
+      resolved.shadowSize = Number(resolved.shadowSize || 0);
+      resolved.backgroundColor = 'rgba(0,0,0,0)';
+      break;
+    default:
+      break;
   }
 
-  const defaultValue = defaultStyle[key];
-  if (defaultValue === undefined) {
-    return true;
+  if (renderContext.playResY >= 1600 && ['outline-heavy', 'shadow-strong', 'colored-outline'].includes(strategy)) {
+    resolved.outlineWidth = Number(resolved.outlineWidth || 0) + 0.5;
   }
 
-  return normalizeComparableValue(value) !== normalizeComparableValue(defaultValue);
+  return resolved;
+}
+
+function buildLineEventText(baseEvent, captionStyle, prefixTag = '') {
+  const lineAnimationTag = buildAnimationTag(captionStyle.animation);
+  const continuationTag = prefixTag || '{\\rDefault}';
+
+  if (!Array.isArray(baseEvent.words) || baseEvent.words.length === 0 || baseEvent.activeIndex < 0) {
+    return `${lineAnimationTag}${prefixTag}${escapeAssText(baseEvent.text || '')}`;
+  }
+
+  return `${lineAnimationTag}${prefixTag}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, captionStyle, continuationTag)}`;
+}
+
+function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
+  const variant = captionStyle.variant;
+  const primary = hexToAssBgr(captionStyle.fontColor);
+  const accent = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
+  const outline = hexToAssBgr(captionStyle.outlineColor || '#000000');
+  const darkOutline = hexToAssBgr('#000000');
+
+  switch (variant) {
+    case 'neon':
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${primary}\\3c${primary}\\bord8\\blur10\\shad0\\1a&H55\\3a&H55}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${accent}\\3c${accent}\\bord4\\blur4\\shad0\\1a&H25\\3a&H25}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle) }
+      ];
+    case 'glitch':
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFFFF00&\\3c&HFFFF00&\\bord3\\blur1\\xshad-3\\yshad0\\1a&H40\\3a&H40}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFF00FF&\\3c&HFF00FF&\\bord3\\blur1\\xshad3\\yshad0\\1a&H40\\3a&H40}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle) }
+      ];
+    case 'extrude':
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${darkOutline}\\3c${darkOutline}\\bord2\\blur0\\xshad6\\yshad6\\1a&H70}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${darkOutline}\\3c${darkOutline}\\bord2\\blur0\\xshad3\\yshad3\\1a&H45}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, bold: true }, `{\\3c${outline}\\bord4\\shad0}`) }
+      ];
+    case 'comic': {
+      const comicStroke = !isTransparentBackground(captionStyle.backgroundColor)
+        ? hexToAssBgr(captionStyle.backgroundColor)
+        : hexToAssBgr('#FFE600');
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${comicStroke}\\3c${comicStroke}\\bord8\\blur0\\shad0}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${darkOutline}\\3c${darkOutline}\\bord3\\blur0\\shad0}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, bold: true }) }
+      ];
+    }
+    case 'retro': {
+      const retroStroke = !isTransparentBackground(captionStyle.backgroundColor)
+        ? hexToAssBgr(captionStyle.backgroundColor)
+        : hexToAssBgr('#F4C26B');
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${retroStroke}\\3c${retroStroke}\\bord9\\blur0\\shad0}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c${darkOutline}\\3c${darkOutline}\\bord4\\blur0\\shad1}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, bold: true, spacing: Number(captionStyle.spacing || 0) + 0.5 }) }
+      ];
+    }
+    case 'split-color': {
+      const lowerColor = !isTransparentBackground(captionStyle.backgroundColor)
+        ? hexToAssBgr(captionStyle.backgroundColor)
+        : accent;
+      const splitY = Math.round(
+        captionStyle.position === 'top'
+          ? renderContext.playResY * 0.18
+          : captionStyle.position === 'middle'
+            ? renderContext.playResY * 0.5
+            : renderContext.playResY * 0.82
+      );
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\clip(0,0,${renderContext.playResX},${splitY})\\1c${primary}\\3c${outline}\\bord3\\shad0}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\clip(0,${splitY},${renderContext.playResX},${renderContext.playResY})\\1c${lowerColor}\\3c${outline}\\bord3\\shad0}`) }
+      ];
+    }
+    case 'neon-box': {
+      const neonBack = !isTransparentBackground(captionStyle.backgroundColor)
+        ? rgbaToAssBackColor(captionStyle.backgroundColor)
+        : rgbaToAssBackColor('rgba(0,0,0,0.75)');
+      const neonBoxStyle = {
+        ...captionStyle,
+        borderStyle: 3,
+        outlineWidth: Math.max(Number(captionStyle.boxPadding || 6), 10),
+        backgroundColor: captionStyle.backgroundColor,
+        boxPadding: Math.max(Number(captionStyle.boxPadding || 0), 10)
+      };
+      return [
+        { layer: 0, text: `${buildAnimationTag(neonBoxStyle.animation)}{\\bord10\\blur8\\shad0\\3c${accent}\\4c${neonBack}\\3a&H35}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, neonBoxStyle, '{\\bord10\\blur8\\shad0}')}` },
+        { layer: 1, text: buildLineEventText(baseEvent, neonBoxStyle, `{\\1c${accent}\\3c${accent}\\bord5\\blur5\\shad0\\1a&H30\\3a&H30}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, neonBoxStyle) }
+      ];
+    }
+    case 'gradient': {
+      const topColor = primary;
+      const midColor = accent;
+      const bottomColor = !isTransparentBackground(captionStyle.backgroundColor)
+        ? hexToAssBgr(captionStyle.backgroundColor)
+        : hexToAssBgr('#FF4F9A');
+      const upperY = Math.round(
+        captionStyle.position === 'top'
+          ? renderContext.playResY * 0.12
+          : captionStyle.position === 'middle'
+            ? renderContext.playResY * 0.42
+            : renderContext.playResY * 0.72
+      );
+      const lowerY = upperY + Math.round(renderContext.playResY * 0.08);
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\clip(0,0,${renderContext.playResX},${upperY})\\1c${topColor}\\3c${outline}\\bord3\\shad0}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\clip(0,${upperY},${renderContext.playResX},${lowerY})\\1c${midColor}\\3c${outline}\\bord3\\shad0}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle, `{\\clip(0,${lowerY},${renderContext.playResX},${renderContext.playResY})\\1c${bottomColor}\\3c${outline}\\bord3\\shad0}`) }
+      ];
+    }
+    case 'frosted': {
+      const frostedBack = rgbaToAssBackColor(captionStyle.backgroundColor || 'rgba(20,20,20,0.45)');
+      return [
+        { layer: 0, text: `${buildAnimationTag(captionStyle.animation)}{\\bord12\\blur6\\shad0\\4c${frostedBack}\\3c&H00FFFFFF&\\3a&H55}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, captionStyle, '{\\bord12\\blur6\\shad0}')}` },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFFFFF&\\3c&H00FFFFFF&\\bord2\\blur1\\shad0\\1a&H25\\3a&H45}') },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle) }
+      ];
+    }
+    case 'fire':
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H0030FF&\\3c&H0030FF&\\bord9\\blur9\\shad0\\1a&H55\\3a&H55}') },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H006BFF&\\3c&H006BFF&\\bord5\\blur4\\shad0\\1a&H20\\3a&H20}') },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#FFE600', highlightColor: '#FF9A00', outlineColor: '#000000' }, '{\\1c&H00E6FF&\\2c&H009AFF&\\3c&H000000&\\bord3\\shad0}') }
+      ];
+    case 'ice':
+      return [
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFB7&\\3c&H00FFB7&\\bord9\\blur9\\shad0\\1a&H55\\3a&H55}') },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFC8&\\3c&H00FFC8&\\bord5\\blur4\\shad0\\1a&H20\\3a&H20}') },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#E0FFFF', highlightColor: '#7DE3FF', outlineColor: '#003A7A' }, '{\\1c&HFFFFE0&\\2c&HFFE37D&\\3c&H7A3A00&\\bord3\\shad0}') }
+      ];
+    default:
+      return [{ layer: 0, text: buildLineEventText(baseEvent, captionStyle) }];
+  }
 }
 
 function resolveCaptionStyle(style = {}) {
@@ -189,7 +409,7 @@ function resolveCaptionStyle(style = {}) {
     fontFamily: 'Arial',
     fontSize: 24,
     fontColor: '#FFFFFF',
-    highlightColor: style.fontColor || '#FFFFFF',
+    highlightColor: undefined,
     backgroundColor: 'rgba(0,0,0,0.5)',
     outlineColor: '#000000',
     outlineWidth: 2,
@@ -199,43 +419,22 @@ function resolveCaptionStyle(style = {}) {
     italic: false,
     spacing: 0,
     borderStyle: 3,
+    underline: false,
     position: 'bottom',
     wordEffect: 'karaoke-fill',
     animation: undefined
   };
 
-  const presetStyle = style.stylePreset ? CAPTION_STYLE_PRESETS[style.stylePreset] || {} : {};
-  const visualKeys = [
-    'fontFamily',
-    'fontSize',
-    'fontColor',
-    'highlightColor',
-    'backgroundColor',
-    'outlineColor',
-    'outlineWidth',
-    'shadowSize',
-    'boxPadding',
-    'bold',
-    'italic',
-    'spacing',
-    'borderStyle'
-  ];
-
-  const styleOverrides = { ...style };
-
-  if (style.stylePreset) {
-    for (const key of visualKeys) {
-      if (!shouldUseRequestOverride(key, style[key], defaultStyle)) {
-        delete styleOverrides[key];
-      }
-    }
-  }
-
-  const resolved = { ...defaultStyle, ...presetStyle, ...styleOverrides };
+  const resolved = { ...defaultStyle, ...style };
 
   if (!resolved.highlightColor) {
     resolved.highlightColor = resolved.fontColor;
   }
+
+  resolved.variant = normalizeVariantName(resolved.variant) || 'none';
+  resolved.variantConfig = getCaptionVariantConfig(resolved.variant);
+
+  delete resolved.stylePreset;
 
   return resolved;
 }
@@ -433,33 +632,42 @@ app.post('/render', authenticate, async (req, res) => {
 
     // 2. Generate ASS Subtitle file
     console.log(`[Job ${postId}] Generating styling payload...`);
-    const primaryColour = hexToAssBgr(captionStyle.fontColor);
-    const secondaryColour = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
-    const outlineColour = hexToAssBgr(captionStyle.outlineColor);
-    const backColour = rgbaToAssBackColor(captionStyle.backgroundColor);
-    const alignment = captionStyle.position === 'top' ? 8 : captionStyle.position === 'middle' ? 5 : 2;
+    const variantStyle = resolveBasicVariantStyle(captionStyle, { playResX, playResY });
+    const primaryColour = hexToAssBgr(variantStyle.fontColor);
+    const secondaryColour = hexToAssBgr(variantStyle.highlightColor || variantStyle.fontColor);
+    const outlineColour = hexToAssBgr(variantStyle.outlineColor);
+    const backColour = rgbaToAssBackColor(variantStyle.backgroundColor);
+    const alignment = variantStyle.position === 'top' ? 8 : variantStyle.position === 'middle' ? 5 : 2;
     const topMarginV = Math.max(32, Math.round(playResY * 0.05));
     const bottomMarginV = Math.max(56, Math.round(playResY * 0.08));
-    const marginV = captionStyle.position === 'bottom' ? bottomMarginV : captionStyle.position === 'top' ? topMarginV : 0;
-    const bold = captionStyle.bold ? -1 : 0;
-    const italic = captionStyle.italic ? -1 : 0;
+    const marginV = variantStyle.position === 'bottom' ? bottomMarginV : variantStyle.position === 'top' ? topMarginV : 0;
+    const bold = variantStyle.bold ? -1 : 0;
+    const italic = variantStyle.italic ? -1 : 0;
+    const underline = variantStyle.underline ? -1 : 0;
     const fontScale = Math.max(1, playResY / 1280);
-    const fontSize = Math.max(24, Math.round(Number(captionStyle.fontSize || 24) * fontScale));
-    const borderStyle = Number.isFinite(Number(captionStyle.borderStyle)) ? Number(captionStyle.borderStyle) : 3;
-    const outlineWidth = Number.isFinite(Number(captionStyle.outlineWidth)) ? Number(captionStyle.outlineWidth) : 2;
-    const boxPadding = Number.isFinite(Number(captionStyle.boxPadding)) ? Number(captionStyle.boxPadding) : 6;
+    const fontSize = Math.max(24, Math.round(Number(variantStyle.fontSize || 24) * fontScale));
+    const borderStyle = Number.isFinite(Number(variantStyle.borderStyle)) ? Number(variantStyle.borderStyle) : 3;
+    const outlineWidth = Number.isFinite(Number(variantStyle.outlineWidth)) ? Number(variantStyle.outlineWidth) : 2;
+    const boxPadding = Number.isFinite(Number(variantStyle.boxPadding)) ? Number(variantStyle.boxPadding) : 6;
     const effectiveOutlineWidth = borderStyle === 3 ? Math.max(outlineWidth, boxPadding) : outlineWidth;
-    const shadowSize = Number.isFinite(Number(captionStyle.shadowSize)) ? Number(captionStyle.shadowSize) : 0;
-    const spacing = Number.isFinite(Number(captionStyle.spacing)) ? Number(captionStyle.spacing) : 0;
-    const marginH = Math.max(10, Math.round(playResX * 0.015));
-    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${captionStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},0,0,100,100,${spacing},0,${borderStyle},${effectiveOutlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+    const shadowSize = Number.isFinite(Number(variantStyle.shadowSize)) ? Number(variantStyle.shadowSize) : 0;
+    const spacing = Number.isFinite(Number(variantStyle.spacing)) ? Number(variantStyle.spacing) : 0;
+    const marginRatio = Number.isFinite(Number(variantStyle.marginHorizontalRatio)) ? Number(variantStyle.marginHorizontalRatio) : 0.015;
+    const marginH = Math.max(10, Math.round(playResX * marginRatio));
+    const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${variantStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},${underline},0,100,100,${spacing},0,${borderStyle},${effectiveOutlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
-      .flatMap(seg => buildSegmentDialogueEvents(seg, captionStyle))
-      .map(event => {
-        const start = msToAssTime(event.startMs);
-        const end = msToAssTime(event.endMs);
-        return `Dialogue: 0,${start},${end},Default,,0,0,0,,${event.text}`;
+      .flatMap(seg => buildSegmentDialogueEvents(seg, variantStyle))
+      .flatMap(event => {
+        const layeredEntries = ['ass-layered', 'ffmpeg-advanced'].includes(variantStyle.variantConfig?.tier)
+          ? buildVariantDialogueEntries(event, variantStyle, { playResX, playResY })
+          : [{ layer: 0, text: buildLineEventText(event, variantStyle) }];
+
+        return layeredEntries.map(entry => {
+          const start = msToAssTime(event.startMs);
+          const end = msToAssTime(event.endMs);
+          return `Dialogue: ${entry.layer},${start},${end},Default,,0,0,0,,${entry.text}`;
+        });
       })
       .join('\n');
 

@@ -32,8 +32,7 @@ Main limitations identified initially:
 1. subtitle canvas was fixed at `720x1280`
 2. auto-segmentation was hardcoded to `3 words per caption`
 3. no per-word highlighting, karaoke, or richer visual effects
-4. no named caption presets such as `MrBeast Yellow`, `Frosted Glass`, etc.
-5. style model was too small for advanced caption looks
+4. style model was too small for advanced caption looks
 
 ## What We Achieved So Far
 
@@ -151,37 +150,171 @@ Upgraded behavior:
 
 This makes caption placement more reliable across portrait and landscape videos.
 
-### 6. Added preset-based caption styling
+### 6. Added variant definition layer
 
 Original behavior:
 
-- the server only accepted raw style properties
-- there were no named presets
+- `variant` could be present in incoming requests, but there was no formal server-side meaning for it
+- the caption server did not define which variant values were supported
 
 Upgraded behavior:
 
-- the server now supports named preset styles through `captionStyle.stylePreset`
-- preset values are mapped into ASS-friendly style properties
-- explicit style fields still override the preset when provided
+- the server now has a central variant registry
+- incoming `captionStyle.variant` values are normalized
+- each supported variant now has:
+  - an intended visual meaning
+  - an implementation tier
+  - an ASS strategy name
+  - a fallback target
+- unknown variants safely fall back to `none`
 
-Currently supported presets:
+Implemented:
 
-- `Minimal`
-- `Clean Black`
-- `Outline White`
-- `Outline Yellow`
-- `Shadow White`
-- `Shadow Yellow`
-- `Bold White`
-- `MrBeast Yellow`
-- `Neon Cyan`
-- `Cinema Black`
+- central variant definition file
+- request-time variant normalization
+- request-time variant config resolution
+
+Current supported variant names:
+
+- `box`
+- `bubble`
+- `subtitles`
+- `outline`
+- `bold-outline`
+- `neon`
+- `gradient`
+- `shadow-pop`
+- `glitch`
+- `extrude`
+- `underline`
+- `frosted`
+- `comic`
+- `fire`
+- `ice`
+- `colored-stroke`
+- `neon-box`
+- `retro`
+- `split-color`
+- `none`
+
+Notes:
+
+- this step defines the mapping layer only
+- it does not yet implement full visual behavior for every variant
+- current rendering remains compatible while variant-specific rendering is built incrementally
+
+### 7. Implemented ASS-basic variant rendering
+
+Original behavior:
+
+- `variant` was classified but did not change rendering behavior yet
+
+Upgraded behavior:
+
+- the first group of ASS-friendly variants now changes the generated subtitle style
+- these variants now apply concrete ASS overrides at render time
+
+Implemented variants in this step:
+
+- `box`
+- `bubble` approximate
+- `subtitles` approximate
+- `outline`
+- `bold-outline`
+- `shadow-pop`
+- `underline`
+- `colored-stroke`
+- `none`
+
+How they are currently implemented:
+
+- `box`: boxed background with padding
+- `bubble`: box-style approximation with larger padding
+- `subtitles`: wider boxed subtitle-band approximation
+- `outline`: medium outline text
+- `bold-outline`: heavier outline plus bold text
+- `shadow-pop`: stronger shadow plus heavier text treatment
+- `underline`: ASS underline plus outlined text treatment
+- `colored-stroke`: colored outline derived from the background/accent color
+- `none`: plain text-oriented styling with transparent background
+
+Notes:
+
+- `bubble` and `subtitles` are currently approximations inside ASS limitations
+- more advanced/layered variants are still pending
+
+### 8. Implemented first layered ASS variant rendering
+
+Original behavior:
+
+- layered variants were defined in the registry, but they still rendered like the default/basic path
+
+Upgraded behavior:
+
+- layered variants now emit multiple ASS dialogue layers for the same caption moment
+- this allows approximations for glow, RGB split, extrude, thicker comic-style strokes, and similar looks
+
+Implemented variants in this step:
+
+- `neon`
+- `glitch`
+- `extrude`
+- `comic`
+- `retro`
+- `split-color`
+- `neon-box`
+
+How they are currently implemented:
+
+- `neon`: blurred glow layers plus main text
+- `glitch`: cyan/magenta offset layers plus main text
+- `extrude`: stacked dark offset layers plus main text
+- `comic`: thick accent stroke layer, black stroke layer, then main text
+- `retro`: warm stroke layer, black stroke layer, then main text
+- `split-color`: clipped upper/lower color approximation
+- `neon-box`: glowing box approximation plus glowing text layers
+
+Notes:
+
+- these are ASS approximations of the old canvas intent
+- `split-color` is currently an approximate clipped implementation
+- hard variants like `gradient`, `frosted`, `fire`, and `ice` are still pending
+
+### 9. Implemented ASS-first approximations for the hard variant group
+
+Original behavior:
+
+- hard variants were classified, but they had no dedicated rendering behavior yet
+
+Upgraded behavior:
+
+- the hard group now renders through ASS-first approximations
+- these implementations keep the current pipeline simple while providing immediate usable output
+
+Implemented variants in this step:
+
+- `gradient`
+- `frosted`
+- `fire`
+- `ice`
+
+How they are currently implemented:
+
+- `gradient`: clipped multi-band color fill approximation
+- `frosted`: soft panel/glass-style approximation with layered border and fill
+- `fire`: warm glow and warm fill approximation
+- `ice`: cool glow and cool fill approximation
+
+Notes:
+
+- these are not full FFmpeg overlay implementations yet
+- they are intentionally ASS-based approximations of the old canvas intent
+- a future FFmpeg path can still improve these variants further
 
 ## Current CaptionStyle Support
 
 The code currently supports these `captionStyle` inputs:
 
-- `stylePreset`
 - `fontFamily`
 - `fontSize`
 - `fontColor`
@@ -197,6 +330,14 @@ The code currently supports these `captionStyle` inputs:
 - `position`
 - `wordEffect`
 - `animation`
+- `variant`
+
+Notes:
+
+- styling is driven directly by the incoming `captionStyle` request body
+- `variant` is now accepted and normalized against a central registry
+- variant-specific visual rendering is not fully implemented yet
+- there is no preset registry in the current code
 
 Supported enum-like values:
 
@@ -204,37 +345,34 @@ Supported enum-like values:
 - `wordEffect`: `karaoke-fill`, `karaoke`, `karaoke-outline`
 - `animation`: `fade`, `pop`
 
+Supported `variant` values:
+
+- `box`
+- `bubble`
+- `subtitles`
+- `outline`
+- `bold-outline`
+- `neon`
+- `gradient`
+- `shadow-pop`
+- `glitch`
+- `extrude`
+- `underline`
+- `frosted`
+- `comic`
+- `fire`
+- `ice`
+- `colored-stroke`
+- `neon-box`
+- `retro`
+- `split-color`
+- `none`
+
 ## What Is Still Needed
 
-### 1. Dynamic subtitle canvas sizing
+### 1. Expanded style model
 
-Still needed:
-
-- detect actual input video dimensions with `ffprobe`
-- set `PlayResX` and `PlayResY` dynamically
-- scale margins and font sizing more reliably for landscape and portrait videos
-
-Without this, captions are still authored against a fixed `720x1280` ASS canvas.
-
-### 2. Preset-based caption styles
-
-To support named styles like:
-
-- `MrBeast Yellow`
-- `Outline White`
-- `Neon Cyan`
-- `Minimal`
-- `Cinema Black`
-
-the code needs:
-
-- a preset registry in code
-- mapping from preset name to ASS style values
-- merging logic so presets and explicit overrides can coexist cleanly
-
-### 3. Expanded style model
-
-To support richer visual presets, `captionStyle` needs more fields such as:
+To support richer caption styles, `captionStyle` can still grow with more fields such as:
 
 - `outlineColor`
 - `outlineWidth`
@@ -249,21 +387,7 @@ To support richer visual presets, `captionStyle` needs more fields such as:
 - `lineSpacing`
 - `textTransform`
 
-### 4. Multi-layer ASS rendering
-
-Many advanced looks cannot be achieved with a single `Style: Default` and one subtitle layer.
-
-Needed:
-
-- support for multiple ASS styles
-- support for multiple `Dialogue` layers per caption
-- layered text rendering for:
-  - fake glow
-  - fake 3D
-  - heavier outline treatments
-  - split-color looks
-
-### 5. More advanced ASS tags
+### 2. More advanced ASS tags
 
 Needed for broader style coverage:
 
@@ -289,7 +413,7 @@ This would allow better support for:
 - title-style captions
 - neon approximations
 
-### 6. FFmpeg filtergraph-based effects for styles ASS cannot do well
+### 3. FFmpeg filtergraph-based effects for styles ASS cannot do well
 
 Some styles discussed earlier do not map cleanly to plain ASS.
 
@@ -309,9 +433,9 @@ To support those properly, further work is needed:
 - pre-rendered overlay assets or text textures
 - multi-pass rendering for complex looks
 
-### 7. Preset classification and rollout plan
+### 4. Variant classification and rollout plan
 
-The remaining styles should be split into implementation groups:
+Variants are now formally classified into implementation groups:
 
 - easy with ASS only
 - medium with layered ASS
@@ -320,10 +444,11 @@ The remaining styles should be split into implementation groups:
 Recommended rollout order:
 
 1. dynamic canvas sizing
-2. preset registry with ASS-friendly styles
-3. expanded style fields
-4. layered ASS rendering
-5. FFmpeg effects for hard presets
+2. define `variant` meaning and mapping rules
+3. implement ASS-basic variants
+4. implement layered ASS variants
+5. expand style fields where needed
+6. improve hard variants with FFmpeg effects where needed
 
 ## Practical Status Summary
 
@@ -335,17 +460,21 @@ Current status:
 - `fade` animation is supported
 - highlight color is now supported
 - dynamic subtitle canvas sizing is now supported
-- preset-based caption styling is now supported
-- the API contract has only lightly changed and remains simple
+- styling is driven by raw `captionStyle` request fields
+- `variant` is now normalized and resolved through a central registry
+- each variant now has a documented intent, strategy, and fallback
+- the ASS-basic variant group is now implemented
+- the first layered ASS variant group is now implemented
+- the hard variant group now has ASS-first approximations
+- the API contract remains simple
 
 Not done yet:
 
-- preset caption themes
-- dynamic subtitle canvas
 - advanced glow / blur / glitch / fire / ice styles
-- layered text rendering
+- FFmpeg-quality implementations for the hard variants
 - FFmpeg-based cinematic effects
 
 ## Files Changed During This Work
 
 - [index.js](D:\caption-server\index.js:1)
+- [caption-variants.js](D:\caption-server\caption-variants.js:1)
