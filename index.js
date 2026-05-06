@@ -268,6 +268,13 @@ function resolveBasicVariantStyle(captionStyle, renderContext) {
       resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 2.5);
       resolved.backgroundColor = 'rgba(0,0,0,0)';
       break;
+    case 'rgb-split':
+      resolved.borderStyle = 1;
+      resolved.bold = true;
+      resolved.backgroundColor = 'rgba(0,0,0,0)';
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 3);
+      resolved.shadowSize = 0;
+      break;
     case 'glass-panel-approx':
       resolved.borderStyle = 3;
       resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 12);
@@ -370,6 +377,7 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
       case 'subtitles':
       case 'frosted':
       case 'neon-box':
+      case 'glitch':
       case 'outline':
       case 'bold-outline':
       case 'shadow-pop':
@@ -409,9 +417,9 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
       ];
     case 'glitch':
       return [
-        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFFFF00&\\3c&HFFFF00&\\bord3\\blur1\\xshad-3\\yshad0\\1a&H40\\3a&H40}`) },
-        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFF00FF&\\3c&HFF00FF&\\bord3\\blur1\\xshad3\\yshad0\\1a&H40\\3a&H40}`) },
-        { layer: 2, text: buildLineEventText(baseEvent, captionStyle) }
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFFFF00&\\3c&HFFFF00&\\bord2\\blur0.6\\xshad-1.5\\yshad0\\1a&H88\\3a&H88}`) },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, `{\\1c&HFF00FF&\\3c&HFF00FF&\\bord2\\blur0.6\\xshad1.5\\yshad0\\1a&H88\\3a&H88}`) },
+        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, bold: true }, `{\\1c${primary}\\3c${darkOutline}\\bord3\\blur0\\shad0}`) }
       ];
     case 'extrude':
       return [
