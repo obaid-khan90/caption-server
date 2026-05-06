@@ -172,6 +172,31 @@ function isTransparentBackground(backgroundColor) {
   return /rgba?\(\s*0\s*,\s*0\s*,\s*0\s*(?:,\s*0(?:\.0+)?)?\s*\)/i.test(backgroundColor);
 }
 
+function applyReadabilityBaseline(captionStyle, renderContext) {
+  const resolved = { ...captionStyle };
+  const strategy = captionStyle.variantConfig?.assStrategy || 'plain';
+  const isBoxFamily = ['box', 'box-rounded', 'subtitle-band', 'glass-panel-approx', 'glow-box'].includes(strategy);
+  const isEffectFamily = ['glow', 'rgb-split', 'extrude', 'comic-stroke', 'retro-stroke', 'split-fill', 'warm-glow-approx', 'cool-glow-approx', 'gradient-approx'].includes(strategy);
+
+  if (!isBoxFamily && isTransparentBackground(resolved.backgroundColor) === false && !['colored-outline'].includes(strategy)) {
+    resolved.backgroundColor = 'rgba(0,0,0,0)';
+  }
+
+  resolved.fontSize = Math.max(Number(resolved.fontSize || 24), isEffectFamily ? 32 : 30);
+  resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), isBoxFamily ? 1.5 : 2.5);
+  resolved.shadowSize = Math.max(Number(resolved.shadowSize || 0), isEffectFamily ? 0.75 : 0);
+  resolved.spacing = Math.max(Number(resolved.spacing || 0), 0.15);
+  resolved.marginHorizontalRatio = Math.max(Number(resolved.marginHorizontalRatio || 0), 0.045);
+  resolved.bottomSafeRatio = Math.max(Number(resolved.bottomSafeRatio || 0), 0.1);
+  resolved.topSafeRatio = Math.max(Number(resolved.topSafeRatio || 0), 0.065);
+
+  if (isEffectFamily && resolved.animation === 'pop') {
+    resolved.animation = 'fade';
+  }
+
+  return resolved;
+}
+
 function resolveBasicVariantStyle(captionStyle, renderContext) {
   const resolved = { ...captionStyle };
   const strategy = captionStyle.variantConfig?.assStrategy || 'plain';
@@ -180,22 +205,28 @@ function resolveBasicVariantStyle(captionStyle, renderContext) {
   switch (strategy) {
     case 'box':
       resolved.borderStyle = 3;
-      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 8);
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 12);
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 1.5);
+      resolved.shadowSize = 0;
       if (isTransparentBackground(resolved.backgroundColor)) {
-        resolved.backgroundColor = defaultBoxBackground;
+        resolved.backgroundColor = 'rgba(0,0,0,0.82)';
       }
       break;
     case 'box-rounded':
       resolved.borderStyle = 3;
-      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 14);
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 18);
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 1.5);
+      resolved.shadowSize = 0;
       if (isTransparentBackground(resolved.backgroundColor)) {
-        resolved.backgroundColor = defaultBoxBackground;
+        resolved.backgroundColor = 'rgba(0,0,0,0.82)';
       }
       break;
     case 'subtitle-band':
       resolved.borderStyle = 3;
-      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 24);
+      resolved.boxPadding = Math.max(Number(resolved.boxPadding || 0), 28);
       resolved.marginHorizontalRatio = 0.05;
+      resolved.outlineWidth = Math.max(Number(resolved.outlineWidth || 0), 1.25);
+      resolved.shadowSize = 0;
       if (isTransparentBackground(resolved.backgroundColor)) {
         resolved.backgroundColor = 'rgba(0,0,0,0.82)';
       }
@@ -295,6 +326,35 @@ function buildActiveWordOnlyText(baseEvent, captionStyle, prefixTag = '') {
   return `${lineAnimationTag}${text}`;
 }
 
+function buildPositionedActiveWordText(baseEvent, captionStyle, renderContext, prefixTag = '') {
+  if (!Array.isArray(baseEvent.words) || baseEvent.words.length === 0 || baseEvent.activeIndex < 0) {
+    return '';
+  }
+
+  const activeWord = baseEvent.words[baseEvent.activeIndex];
+  const escapedText = escapeAssText(activeWord.text || '');
+  const lineAnimationTag = buildAnimationTag(captionStyle.animation);
+  const activeWordTag = `${buildHighlightedWordTag(captionStyle)}${buildWordAnimationTag(captionStyle.animation)}`;
+  const fontScale = Math.max(1, renderContext.playResY / 1280);
+  const fontSize = Math.max(24, Math.round(Number(captionStyle.fontSize || 24) * fontScale));
+  const avgCharWidth = fontSize * 0.62;
+  const words = baseEvent.words.map(word => String(word.text || ''));
+  const fullText = words.join(' ');
+  const charsBefore = words.slice(0, baseEvent.activeIndex).join(' ').length + (baseEvent.activeIndex > 0 ? 1 : 0);
+  const totalWidth = Math.max(1, fullText.length * avgCharWidth);
+  const activeWidth = Math.max(avgCharWidth, escapedText.length * avgCharWidth);
+  const centerX = renderContext.playResX / 2;
+  const leftX = centerX - totalWidth / 2;
+  const activeX = Math.round(leftX + charsBefore * avgCharWidth + activeWidth / 2);
+
+  let activeY;
+  if (captionStyle.position === 'top') activeY = Math.round(renderContext.playResY * 0.12);
+  else if (captionStyle.position === 'middle') activeY = Math.round(renderContext.playResY * 0.5);
+  else activeY = Math.round(renderContext.playResY * 0.88);
+
+  return `${lineAnimationTag}{\\an5\\pos(${activeX},${activeY})}${prefixTag}${activeWordTag}${escapedText}{\\rDefault}`;
+}
+
 function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
   const variant = captionStyle.variant;
   const primary = hexToAssBgr(captionStyle.fontColor);
@@ -305,15 +365,25 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
 
   if (!isBase) {
     switch (variant) {
+      case 'box':
+      case 'bubble':
+      case 'subtitles':
+      case 'frosted':
+      case 'neon-box':
+      case 'outline':
+      case 'bold-outline':
+      case 'shadow-pop':
+      case 'underline':
+        return [];
       case 'fire':
         return [
-          { layer: 15, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#FFD36B' }, '{\\1c&H006BFF&\\3c&H0030FF&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
-          { layer: 16, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#FFF199' }, '{\\1c&H00E6FF&\\3c&H000000&\\bord2.5\\blur0\\shad0}') }
+          { layer: 15, text: buildPositionedActiveWordText(baseEvent, { ...captionStyle, highlightColor: '#FFD36B' }, renderContext, '{\\1c&H006BFF&\\3c&H0030FF&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
+          { layer: 16, text: buildPositionedActiveWordText(baseEvent, { ...captionStyle, highlightColor: '#FFF199' }, renderContext, '{\\1c&H00E6FF&\\3c&H000000&\\bord2.5\\blur0\\shad0}') }
         ].filter(entry => entry.text);
       case 'ice':
         return [
-          { layer: 15, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#BFEFFF' }, '{\\1c&H00FFC8&\\3c&H00FFB7&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
-          { layer: 16, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#EFFFFF' }, '{\\1c&HFFFFE0&\\3c&H7A3A00&\\bord2.5\\blur0\\shad0}') }
+          { layer: 15, text: buildPositionedActiveWordText(baseEvent, { ...captionStyle, highlightColor: '#BFEFFF' }, renderContext, '{\\1c&H00FFC8&\\3c&H00FFB7&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
+          { layer: 16, text: buildPositionedActiveWordText(baseEvent, { ...captionStyle, highlightColor: '#EFFFFF' }, renderContext, '{\\1c&HFFFFE0&\\3c&H7A3A00&\\bord2.5\\blur0\\shad0}') }
         ].filter(entry => entry.text);
       case 'neon':
       case 'glitch':
@@ -323,18 +393,10 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
       case 'split-color':
       case 'neon-box':
       case 'gradient':
-      case 'frosted':
-      case 'box':
-      case 'bubble':
-      case 'subtitles':
-      case 'outline':
-      case 'bold-outline':
-      case 'shadow-pop':
-      case 'underline':
       case 'colored-stroke':
       case 'none':
       default:
-        return [{ layer: 12, text: buildActiveWordOnlyText(baseEvent, captionStyle) }].filter(entry => entry.text);
+        return [{ layer: 12, text: buildPositionedActiveWordText(baseEvent, captionStyle, renderContext) }].filter(entry => entry.text);
     }
   }
 
@@ -463,7 +525,7 @@ function resolveCaptionStyle(style = {}) {
     fontSize: 24,
     fontColor: '#FFFFFF',
     highlightColor: undefined,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0)',
     outlineColor: '#000000',
     outlineWidth: 2,
     shadowSize: 0,
@@ -471,7 +533,7 @@ function resolveCaptionStyle(style = {}) {
     bold: false,
     italic: false,
     spacing: 0,
-    borderStyle: 3,
+    borderStyle: 1,
     underline: false,
     position: 'bottom',
     wordEffect: 'karaoke-fill',
@@ -523,9 +585,9 @@ function shouldBreakSegment(currentWords, nextWord, segmentStartMs) {
   const pauseAfterMs = Math.max(0, nextWord.startMs - lastWord.endMs);
   const endsWithPunctuation = /[.!?,:;]$/.test(lastWord.text);
 
-  if (currentWords.length >= 5) return true;
-  if (currentText.length >= 28) return true;
-  if (segmentDurationMs >= 2200) return true;
+  if (currentWords.length >= 4) return true;
+  if (currentText.length >= 24) return true;
+  if (segmentDurationMs >= 1800) return true;
   if (pauseAfterMs >= 350) return true;
   if (endsWithPunctuation && currentWords.length >= 2) return true;
 
@@ -685,14 +747,17 @@ app.post('/render', authenticate, async (req, res) => {
 
     // 2. Generate ASS Subtitle file
     console.log(`[Job ${postId}] Generating styling payload...`);
-    const variantStyle = resolveBasicVariantStyle(captionStyle, { playResX, playResY });
+    const variantStyle = applyReadabilityBaseline(
+      resolveBasicVariantStyle(captionStyle, { playResX, playResY }),
+      { playResX, playResY }
+    );
     const primaryColour = hexToAssBgr(variantStyle.fontColor);
     const secondaryColour = hexToAssBgr(variantStyle.highlightColor || variantStyle.fontColor);
     const outlineColour = hexToAssBgr(variantStyle.outlineColor);
     const backColour = rgbaToAssBackColor(variantStyle.backgroundColor);
     const alignment = variantStyle.position === 'top' ? 8 : variantStyle.position === 'middle' ? 5 : 2;
-    const topMarginV = Math.max(32, Math.round(playResY * 0.05));
-    const bottomMarginV = Math.max(56, Math.round(playResY * 0.08));
+    const topMarginV = Math.max(40, Math.round(playResY * Number(variantStyle.topSafeRatio || 0.065)));
+    const bottomMarginV = Math.max(84, Math.round(playResY * Number(variantStyle.bottomSafeRatio || 0.1)));
     const marginV = variantStyle.position === 'bottom' ? bottomMarginV : variantStyle.position === 'top' ? topMarginV : 0;
     const bold = variantStyle.bold ? -1 : 0;
     const italic = variantStyle.italic ? -1 : 0;
@@ -705,7 +770,7 @@ app.post('/render', authenticate, async (req, res) => {
     const effectiveOutlineWidth = borderStyle === 3 ? Math.max(outlineWidth, boxPadding) : outlineWidth;
     const shadowSize = Number.isFinite(Number(variantStyle.shadowSize)) ? Number(variantStyle.shadowSize) : 0;
     const spacing = Number.isFinite(Number(variantStyle.spacing)) ? Number(variantStyle.spacing) : 0;
-    const marginRatio = Number.isFinite(Number(variantStyle.marginHorizontalRatio)) ? Number(variantStyle.marginHorizontalRatio) : 0.015;
+    const marginRatio = Number.isFinite(Number(variantStyle.marginHorizontalRatio)) ? Number(variantStyle.marginHorizontalRatio) : 0.045;
     const marginH = Math.max(10, Math.round(playResX * marginRatio));
     const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${variantStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},${underline},0,100,100,${spacing},0,${borderStyle},${effectiveOutlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
