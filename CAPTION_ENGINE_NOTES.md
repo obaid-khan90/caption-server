@@ -311,6 +311,27 @@ Notes:
 - they are intentionally ASS-based approximations of the old canvas intent
 - a future FFmpeg path can still improve these variants further
 
+### 10. Reworked caption timing architecture for stable backgrounds and cleaner overlays
+
+Original behavior:
+
+- every active-word state re-rendered the full styled line
+- boxed/panel variants could visually morph as the active word changed
+- styles like `box` and `fire` could feel jittery because the whole caption treatment was tied to per-word redraws
+
+Upgraded behavior:
+
+- each segment now renders through a stable base caption layer for the full segment duration
+- active-word emphasis is rendered as a separate timed overlay
+- backgrounds and full-line treatments stay stable while the spoken word changes
+
+Benefits:
+
+- more stable `box` / panel-like variants
+- cleaner active-word pop behavior
+- better foundation for `fire`, `ice`, `frosted`, and `neon-box`
+- less visual jitter caused by word-by-word full-line redraws
+
 ## Current CaptionStyle Support
 
 The code currently supports these `captionStyle` inputs:
@@ -466,6 +487,7 @@ Current status:
 - the ASS-basic variant group is now implemented
 - the first layered ASS variant group is now implemented
 - the hard variant group now has ASS-first approximations
+- the renderer now uses a stable segment base plus active-word overlay architecture
 - the API contract remains simple
 
 Not done yet:

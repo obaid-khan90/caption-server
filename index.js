@@ -133,21 +133,22 @@ function buildWordScopedText(words, activeIndex, captionStyle, continuationTag =
   }).join(' ');
 }
 
+function buildSegmentBaseEvent(seg) {
+  return {
+    startMs: seg.startMs,
+    endMs: seg.endMs,
+    text: seg.text || '',
+    words: Array.isArray(seg.words) ? seg.words.filter(word => word.text) : [],
+    activeIndex: -1,
+    renderMode: 'base'
+  };
+}
+
 function buildSegmentDialogueEvents(seg, captionStyle) {
   const words = Array.isArray(seg.words) ? seg.words.filter(word => word.text) : [];
   const minWordDurationMs = 180;
 
-  if (words.length === 0) {
-    return [
-      {
-        startMs: seg.startMs,
-        endMs: seg.endMs,
-        text: seg.text || '',
-        words: [],
-        activeIndex: -1
-      }
-    ];
-  }
+  if (words.length === 0) return [];
 
   return words.map((word, index) => {
     const startMs = Number(word.startMs ?? seg.startMs ?? 0);
@@ -160,7 +161,8 @@ function buildSegmentDialogueEvents(seg, captionStyle) {
       endMs,
       text: seg.text || '',
       words,
-      activeIndex: index
+      activeIndex: index,
+      renderMode: 'active'
     };
   });
 }
@@ -270,14 +272,27 @@ function resolveBasicVariantStyle(captionStyle, renderContext) {
 }
 
 function buildLineEventText(baseEvent, captionStyle, prefixTag = '') {
+  return `${prefixTag}${escapeAssText(baseEvent.text || '')}`;
+}
+
+function buildActiveWordOnlyText(baseEvent, captionStyle, prefixTag = '') {
   const lineAnimationTag = buildAnimationTag(captionStyle.animation);
-  const continuationTag = prefixTag || '{\\rDefault}';
+  const activeWordTag = `${buildHighlightedWordTag(captionStyle)}${buildWordAnimationTag(captionStyle.animation)}`;
 
   if (!Array.isArray(baseEvent.words) || baseEvent.words.length === 0 || baseEvent.activeIndex < 0) {
-    return `${lineAnimationTag}${prefixTag}${escapeAssText(baseEvent.text || '')}`;
+    return '';
   }
 
-  return `${lineAnimationTag}${prefixTag}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, captionStyle, continuationTag)}`;
+  const text = baseEvent.words.map((word, index) => {
+    const escapedText = escapeAssText(word.text || '');
+    if (index === baseEvent.activeIndex) {
+      return `${prefixTag}${activeWordTag}${escapedText}{\\rDefault}`;
+    }
+
+    return `{\\1a&HFF&\\2a&HFF&\\3a&HFF&\\4a&HFF&}${escapedText}{\\1a&H00&\\2a&H00&\\3a&H00&\\4a&H00&}`;
+  }).join(' ');
+
+  return `${lineAnimationTag}${text}`;
 }
 
 function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
@@ -286,6 +301,42 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
   const accent = hexToAssBgr(captionStyle.highlightColor || captionStyle.fontColor);
   const outline = hexToAssBgr(captionStyle.outlineColor || '#000000');
   const darkOutline = hexToAssBgr('#000000');
+  const isBase = baseEvent.renderMode !== 'active';
+
+  if (!isBase) {
+    switch (variant) {
+      case 'fire':
+        return [
+          { layer: 15, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#FFD36B' }, '{\\1c&H006BFF&\\3c&H0030FF&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
+          { layer: 16, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#FFF199' }, '{\\1c&H00E6FF&\\3c&H000000&\\bord2.5\\blur0\\shad0}') }
+        ].filter(entry => entry.text);
+      case 'ice':
+        return [
+          { layer: 15, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#BFEFFF' }, '{\\1c&H00FFC8&\\3c&H00FFB7&\\bord6\\blur5\\shad0\\1a&H15\\3a&H20}') },
+          { layer: 16, text: buildActiveWordOnlyText(baseEvent, { ...captionStyle, highlightColor: '#EFFFFF' }, '{\\1c&HFFFFE0&\\3c&H7A3A00&\\bord2.5\\blur0\\shad0}') }
+        ].filter(entry => entry.text);
+      case 'neon':
+      case 'glitch':
+      case 'extrude':
+      case 'comic':
+      case 'retro':
+      case 'split-color':
+      case 'neon-box':
+      case 'gradient':
+      case 'frosted':
+      case 'box':
+      case 'bubble':
+      case 'subtitles':
+      case 'outline':
+      case 'bold-outline':
+      case 'shadow-pop':
+      case 'underline':
+      case 'colored-stroke':
+      case 'none':
+      default:
+        return [{ layer: 12, text: buildActiveWordOnlyText(baseEvent, captionStyle) }].filter(entry => entry.text);
+    }
+  }
 
   switch (variant) {
     case 'neon':
@@ -354,7 +405,7 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
         boxPadding: Math.max(Number(captionStyle.boxPadding || 0), 10)
       };
       return [
-        { layer: 0, text: `${buildAnimationTag(neonBoxStyle.animation)}{\\bord10\\blur8\\shad0\\3c${accent}\\4c${neonBack}\\3a&H35}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, neonBoxStyle, '{\\bord10\\blur8\\shad0}')}` },
+        { layer: 0, text: `{\\bord10\\blur8\\shad0\\3c${accent}\\4c${neonBack}\\3a&H35}${buildLineEventText(baseEvent, neonBoxStyle)}` },
         { layer: 1, text: buildLineEventText(baseEvent, neonBoxStyle, `{\\1c${accent}\\3c${accent}\\bord5\\blur5\\shad0\\1a&H30\\3a&H30}`) },
         { layer: 2, text: buildLineEventText(baseEvent, neonBoxStyle) }
       ];
@@ -382,22 +433,24 @@ function buildVariantDialogueEntries(baseEvent, captionStyle, renderContext) {
     case 'frosted': {
       const frostedBack = rgbaToAssBackColor(captionStyle.backgroundColor || 'rgba(20,20,20,0.45)');
       return [
-        { layer: 0, text: `${buildAnimationTag(captionStyle.animation)}{\\bord12\\blur6\\shad0\\4c${frostedBack}\\3c&H00FFFFFF&\\3a&H55}${buildWordScopedText(baseEvent.words, baseEvent.activeIndex, captionStyle, '{\\bord12\\blur6\\shad0}')}` },
+        { layer: 0, text: `{\\bord12\\blur6\\shad0\\4c${frostedBack}\\3c&H00FFFFFF&\\3a&H55}${buildLineEventText(baseEvent, captionStyle)}` },
         { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFFFFF&\\3c&H00FFFFFF&\\bord2\\blur1\\shad0\\1a&H25\\3a&H45}') },
         { layer: 2, text: buildLineEventText(baseEvent, captionStyle) }
       ];
     }
     case 'fire':
       return [
-        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H0030FF&\\3c&H0030FF&\\bord9\\blur9\\shad0\\1a&H55\\3a&H55}') },
-        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H006BFF&\\3c&H006BFF&\\bord5\\blur4\\shad0\\1a&H20\\3a&H20}') },
-        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#FFE600', highlightColor: '#FF9A00', outlineColor: '#000000' }, '{\\1c&H00E6FF&\\2c&H009AFF&\\3c&H000000&\\bord3\\shad0}') }
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H0010AA&\\3c&H0010AA&\\bord10\\blur10\\shad0\\1a&H70\\3a&H70}') },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H0030FF&\\3c&H0030FF&\\bord7\\blur6\\shad0\\1a&H35\\3a&H35}') },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H006BFF&\\3c&H006BFF&\\bord4\\blur2\\shad0\\1a&H10\\3a&H18}') },
+        { layer: 3, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#FFD36B', highlightColor: '#FFF199', outlineColor: '#000000', backgroundColor: 'rgba(0,0,0,0)' }, '{\\1c&H006BFF&\\2c&H009AFF&\\3c&H000000&\\bord2.5\\shad0}') }
       ];
     case 'ice':
       return [
-        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFB7&\\3c&H00FFB7&\\bord9\\blur9\\shad0\\1a&H55\\3a&H55}') },
-        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFC8&\\3c&H00FFC8&\\bord5\\blur4\\shad0\\1a&H20\\3a&H20}') },
-        { layer: 2, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#E0FFFF', highlightColor: '#7DE3FF', outlineColor: '#003A7A' }, '{\\1c&HFFFFE0&\\2c&HFFE37D&\\3c&H7A3A00&\\bord3\\shad0}') }
+        { layer: 0, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00A060&\\3c&H00A060&\\bord10\\blur10\\shad0\\1a&H70\\3a&H70}') },
+        { layer: 1, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFB7&\\3c&H00FFB7&\\bord7\\blur6\\shad0\\1a&H35\\3a&H35}') },
+        { layer: 2, text: buildLineEventText(baseEvent, captionStyle, '{\\1c&H00FFC8&\\3c&H00FFC8&\\bord4\\blur2\\shad0\\1a&H10\\3a&H18}') },
+        { layer: 3, text: buildLineEventText(baseEvent, { ...captionStyle, fontColor: '#E0FFFF', highlightColor: '#BFEFFF', outlineColor: '#003A7A', backgroundColor: 'rgba(0,0,0,0)' }, '{\\1c&HFFFFE0&\\2c&HFFEFBF&\\3c&H7A3A00&\\bord2.5\\shad0}') }
       ];
     default:
       return [{ layer: 0, text: buildLineEventText(baseEvent, captionStyle) }];
@@ -657,16 +710,17 @@ app.post('/render', authenticate, async (req, res) => {
     const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${playResX}\nPlayResY: ${playResY}\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${variantStyle.fontFamily},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},${bold},${italic},${underline},0,100,100,${spacing},0,${borderStyle},${effectiveOutlineWidth},${shadowSize},${alignment},${marginH},${marginH},${marginV},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
 
     const events = segments
-      .flatMap(seg => buildSegmentDialogueEvents(seg, variantStyle))
-      .flatMap(event => {
-        const layeredEntries = ['ass-layered', 'ffmpeg-advanced'].includes(variantStyle.variantConfig?.tier)
-          ? buildVariantDialogueEntries(event, variantStyle, { playResX, playResY })
-          : [{ layer: 0, text: buildLineEventText(event, variantStyle) }];
+      .flatMap(seg => {
+        const segmentEvents = [buildSegmentBaseEvent(seg), ...buildSegmentDialogueEvents(seg, variantStyle)];
 
-        return layeredEntries.map(entry => {
-          const start = msToAssTime(event.startMs);
-          const end = msToAssTime(event.endMs);
-          return `Dialogue: ${entry.layer},${start},${end},Default,,0,0,0,,${entry.text}`;
+        return segmentEvents.flatMap(event => {
+          const variantEntries = buildVariantDialogueEntries(event, variantStyle, { playResX, playResY });
+
+          return variantEntries.map(entry => {
+            const start = msToAssTime(event.startMs);
+            const end = msToAssTime(event.endMs);
+            return `Dialogue: ${entry.layer},${start},${end},Default,,0,0,0,,${entry.text}`;
+          });
         });
       })
       .join('\n');
